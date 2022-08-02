@@ -44,6 +44,7 @@ library
     Cardano.Protocol.Socket.Client
     Cardano.Protocol.Socket.Type
     Marconi.Index.Datum
+    Marconi.Index.ScriptTx
     Marconi.Index.TxConfirmationStatus
     Marconi.Index.Utxo
     Plutus.ChainIndex
@@ -85,6 +86,7 @@ library
   --------------------------
   build-depends:
     , cardano-api
+    , cardano-ledger-alonzo
     , cardano-ledger-byron
     , io-classes
     , iohk-monitoring
