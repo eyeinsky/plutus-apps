@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs               #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -9,9 +10,12 @@ import Cardano.Api (Block (Block), BlockHeader (BlockHeader), BlockInMode (Block
                     NetworkMagic (NetworkMagic), SlotNo (SlotNo), Tx (Tx), chainPointToSlotNo,
                     deserialiseFromRawBytesHex, proxyToAsType)
 import Cardano.Api qualified as C
+import Cardano.Api.Shelley qualified as Shelley
 import Cardano.BM.Setup (withTrace)
 import Cardano.BM.Trace (logError)
 import Cardano.BM.Tracing (defaultConfigStdout)
+import Cardano.Ledger.Alonzo.Scripts qualified as Alonzo
+import Codec.Serialise (deserialiseOrFail)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.QSemN (QSemN, newQSemN, signalQSemN, waitQSemN)
 import Control.Concurrent.STM (atomically)
@@ -48,6 +52,21 @@ import Plutus.Streaming (ChainSyncEvent (RollBackward, RollForward), ChainSyncEv
 import Prettyprinter (defaultLayoutOptions, layoutPretty, pretty, (<+>))
 import Prettyprinter.Render.Text (renderStrict)
 import Streaming.Prelude qualified as S
+
+import Data.ByteString.Lazy qualified as BSL
+import Data.ByteString.Short qualified as SBS
+import Ledger.Address qualified as P
+import Ledger.Params qualified as P
+
+-- import Ledger.Address qualified as P
+-- import Ledger.Params qualified as P
+import Plutus.Script.Utils.Scripts qualified as P
+import Plutus.Script.Utils.V1.Scripts qualified as P
+-- import Plutus.V1.Ledger.Api qualified as P
+-- import Plutus.V1.Ledger.Scripts qualified as P
+-- import Plutus.V1.Ledger.Slot qualified as P
+-- import Plutus.V1.Ledger.Tx qualified as P
+
 
 -- | This executable is meant to exercise a set of indexers (for now datumhash -> datum)
 --     against the mainnet (meant to be used for testing).
@@ -261,6 +280,18 @@ scriptTxWorker Coordinator{_barrier} ch path = ScriptTx.open path (ScriptTx.Dept
     txScripts :: forall era . Tx era -> [ScriptTx.ScriptAddress]
     txScripts tx = let
         Tx (body :: C.TxBody era) _ws = tx
+
+        scripts = case body of
+          Shelley.ShelleyTxBody shelleyBasedEra _body scripts' _scriptData _auxData _validity -> let
+              _ = case shelleyBasedEra of
+                C.ShelleyBasedEraAlonzo -> case head scripts' of
+                  Alonzo.PlutusScript _ bs -> bs
+                    -- fmap P.scriptHash $ deserialiseOrFail $ BSL.fromStrict $ SBS.fromShort bs
+                  _                        -> undefined
+                _ -> undefined
+            in scripts'
+          _ -> undefined
+
         map' = plutusScriptsFromTxBody body :: M.Map Ledger.ScriptHash Ledger.Script
         hashes = M.keys map' :: [Ledger.ScriptHash]
       in map ScriptTx.ScriptAddress hashes
