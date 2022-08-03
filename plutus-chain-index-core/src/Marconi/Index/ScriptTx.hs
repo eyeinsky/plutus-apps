@@ -9,10 +9,10 @@
 module Marconi.Index.ScriptTx where
 
 import Cardano.Api (SlotNo)
-import Codec.Serialise (deserialiseOrFail, serialise)
+import Cardano.Api.Shelley qualified as Shelley
+import Codec.Serialise (deserialiseOrFail)
 import Control.Lens.Operators ((^.))
 import Data.ByteString qualified as BS
-import Data.ByteString.Lazy qualified as BL
 
 import Data.Foldable (forM_)
 import Data.Maybe (fromJust)
@@ -20,14 +20,13 @@ import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField qualified as SQL
 import Database.SQLite.Simple.ToField qualified as SQL
 import GHC.Generics (Generic)
-import Ledger.Scripts qualified as Ledger
 import Plutus.HystericalScreams.Index.VSqlite (SqliteIndex)
 import Plutus.HystericalScreams.Index.VSqlite qualified as Ix
 
 
 newtype Depth = Depth Int
 
-newtype ScriptAddress = ScriptAddress Ledger.ScriptHash
+newtype ScriptAddress = ScriptAddress Shelley.ScriptHash
   deriving (Show, Eq)
 newtype TxCbor = TxCbor BS.ByteString
   deriving (Show)
@@ -41,12 +40,14 @@ data ScriptTxRow = ScriptTxRow
   } deriving (Generic)
 
 instance SQL.ToField ScriptAddress where
-  toField (ScriptAddress hash)  = SQL.SQLBlob . BL.toStrict . serialise $ hash
+  toField (ScriptAddress hash)  = SQL.SQLBlob . Shelley.serialiseToRawBytes $ hash
 instance SQL.FromField ScriptAddress where
-  fromField f = deserialiseOrFail <$> (SQL.fromField f) >>=
+  fromField f = deserialiseOrFail <$> SQL.fromField f >>=
     either
-      (\_ -> SQL.returnError SQL.ConversionFailed f "Cannot deserialise address.")
-      (\b -> return (ScriptAddress $ Ledger.ScriptHash b))
+      (\_ -> cantDeserialise)
+      (\b -> maybe cantDeserialise (return . ScriptAddress) $ Shelley.deserialiseFromRawBytes Shelley.AsScriptHash b)
+    where
+      cantDeserialise = SQL.returnError SQL.ConversionFailed f "Cannot deserialise address."
 
 instance SQL.ToRow ScriptTxRow where
   toRow o = [SQL.toField $ scriptAddress o, SQL.toField $ txCbor o]
