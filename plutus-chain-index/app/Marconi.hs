@@ -55,12 +55,12 @@ import Streaming.Prelude qualified as S
 
 import Data.ByteString.Lazy qualified as BSL
 import Data.ByteString.Short qualified as SBS
-import Ledger.Address qualified as P
-import Ledger.Params qualified as P
+-- import Ledger.Address qualified as P
+-- import Ledger.Params qualified as P
 
 -- import Ledger.Address qualified as P
 -- import Ledger.Params qualified as P
-import Plutus.Script.Utils.Scripts qualified as P
+-- import Plutus.Script.Utils.Scripts qualified as P
 import Plutus.Script.Utils.V1.Scripts qualified as P
 -- import Plutus.V1.Ledger.Api qualified as P
 -- import Plutus.V1.Ledger.Scripts qualified as P
@@ -280,20 +280,24 @@ scriptTxWorker Coordinator{_barrier} ch path = ScriptTx.open path (ScriptTx.Dept
     txScripts :: forall era . Tx era -> [ScriptTx.ScriptAddress]
     txScripts tx = let
         Tx (body :: C.TxBody era) _ws = tx
+        map' = plutusScriptsFromTxBody body :: M.Map Ledger.ScriptHash Ledger.Script
+        hashes = M.keys map' :: [Ledger.ScriptHash]
 
         scripts = case body of
           Shelley.ShelleyTxBody shelleyBasedEra _body scripts' _scriptData _auxData _validity -> let
               _ = case shelleyBasedEra of
-                C.ShelleyBasedEraAlonzo -> case head scripts' of
-                  Alonzo.PlutusScript _ bs -> bs
-                    -- fmap P.scriptHash $ deserialiseOrFail $ BSL.fromStrict $ SBS.fromShort bs
+                (C.ShelleyBasedEraAlonzo :: era0) -> case head scripts' of
+                  Alonzo.PlutusScript _ (scriptBs :: SBS.ShortByteString) -> let
+                      script = undefined :: C.Script lang
+                      hash = C.hashScript script :: C.ScriptHash
+                      bs = C.serialiseToRawBytes hash :: C8.ByteString
+                    in undefined
+
                   _                        -> undefined
                 _ -> undefined
             in scripts'
           _ -> undefined
 
-        map' = plutusScriptsFromTxBody body :: M.Map Ledger.ScriptHash Ledger.Script
-        hashes = M.keys map' :: [Ledger.ScriptHash]
       in map ScriptTx.ScriptAddress hashes
 
 combinedIndexer
