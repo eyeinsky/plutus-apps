@@ -1,4 +1,4 @@
-cabal-version: 2.2
+cabal-version: 3.0
 name:          plutus-chain-index-core
 version:       0.1.0.0
 license:       Apache-2.0
@@ -150,6 +150,7 @@ test-suite plutus-chain-index-test
   hs-source-dirs: test
   other-modules:
     Generators
+    MarconiSpec
     Plutus.ChainIndex.Emulator.DiskStateSpec
     Plutus.ChainIndex.Emulator.HandlersSpec
     Plutus.ChainIndex.HandlersSpec
@@ -159,6 +160,7 @@ test-suite plutus-chain-index-test
   -- Local components
   --------------------
   build-depends:
+    , cardano-api:gen
     , freer-extras
     , plutus-chain-index-core
     , plutus-ledger
