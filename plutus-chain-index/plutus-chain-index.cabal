@@ -135,9 +135,7 @@ executable marconi
     , plutus-chain-index-core
     , plutus-hysterical-screams
     , plutus-ledger
-    , plutus-script-utils
     , plutus-streaming
-    , serialise
 
   --------------------------
   -- Other IOG dependencies

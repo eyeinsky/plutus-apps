@@ -265,7 +265,10 @@ scriptTxWorker Coordinator{_barrier} ch path = ScriptTx.open path (ScriptTx.Dept
     txScripts tx = let
         Tx (body :: C.TxBody era) _ws = tx
         hashesMaybe :: [Maybe C.ScriptHash]
-        hashesMaybe = case body of
+        hashesMaybe = let
+            _ = case body of
+              C.TxBody (tbc :: C.TxBodyContent C.ViewTx era) -> undefined
+          in case body of
           Shelley.ShelleyTxBody shelleyBasedEra _body scripts' _scriptData _auxData _validity ->
               case shelleyBasedEra of
                 (C.ShelleyBasedEraAlonzo :: era0) -> map maybeScriptHash scripts'
