@@ -3,6 +3,7 @@
 
 module MarconiSpec where
 
+import Control.Arrow
 import Control.Monad (replicateM)
 import Data.Coerce
 
@@ -21,57 +22,34 @@ import Marconi.Index.ScriptTx qualified as ScriptTx
 
 tests :: TestTree
 tests = testGroup "Marconi"
-  [ testProperty "prop_script_hashes_in_tx_match" testTxScripts]
+  [ testProperty "prop_script_hashes_in_tx_match" getTxBodyScriptsRoundtrip ]
 
-testTxScripts :: Property
-testTxScripts = property $ do
-  let era = AlonzoEra
-
-  -- "Generate a random number of plutus scripts (see `genPlutusScript` from Gen.Cardano.Api.Typed)"
-  nScripts <- forAll $ Gen.integral (Range.linear 5 500)
+genPlutusScriptTxIn :: Gen ((TxIn, Witness WitCtxTxIn AlonzoEra), ScriptHash)
+genPlutusScriptTxIn = do
   let plutusScriptVersion = PlutusScriptV1 :: PlutusScriptVersion PlutusScriptV1
+  script <- CGen.genPlutusScript plutusScriptVersion
+  scriptData <- CGen.genScriptData
+  executionUnits <- genExecutionUnits
+  let witness =
+        ScriptWitness ScriptWitnessForSpending
+          (PlutusScriptWitness
+           PlutusScriptV1InAlonzo
+           PlutusScriptV1
+           script
+           (ScriptDatumForTxIn scriptData)
+           scriptData
+           executionUnits)
+  txIn <- CGen.genTxIn
+  pure ((txIn, witness), hashScript $ PlutusScript PlutusScriptV1 script)
 
-  scripts0 :: [PlutusScript PlutusScriptV1] <- replicateM nScripts $
-    forAll $ CGen.genPlutusScript plutusScriptVersion
-
-  let scripts1 = map (PlutusScript plutusScriptVersion) scripts0 :: [Script PlutusScriptV1]
-      scriptHashes =  map hashScript scripts1 :: [ScriptHash]
-
-  -- create the 1st transaction where scripts are within the outputs:
-  tx1_bodyContent0 <- forAll $ genTxBodyContent era
-  -- create outputs where addressInEra is replaced with the created script address:
-  newTxOuts <- do
-    txOuts :: [TxOut CtxTx AlonzoEra] <- replicateM nScripts $ forAll $ CGen.genTxOut era
-    let addScript (TxOut _addressInEra value datum) scriptHash = let
-          scriptCredential = PaymentCredentialByScript scriptHash
-          addressInEra = makeShelleyAddressInEra Mainnet scriptCredential NoStakeAddress :: AddressInEra AlonzoEra
-          in TxOut addressInEra value datum
-    -- replace scripts into outputs
-    return $ zipWith addScript txOuts scriptHashes
-  -- add the outputs to body content
-  let tx1_bodyContent1 = tx1_bodyContent0 { txOuts = newTxOuts }
-  tx1_body <- case makeTransactionBody tx1_bodyContent1 :: Either TxBodyError (TxBody AlonzoEra) of
-    Left err -> fail $ "First txBody: " <> displayError err
-    Right r  -> return r
-
-  let tx1_id = getTxId tx1_body :: TxId
-
-  -- "then generate an TxIns which spends funds from these scripts"
-  let tx2_ins0 = map (\ix -> TxIn tx1_id $ TxIx $ fromIntegral ix) [0 .. (nScripts - 1)]
-      -- ^ create TxIns by referring to output indexes in
-      tx2_ins1 = map (, BuildTxWith (KeyWitness KeyWitnessForSpending)) tx2_ins0
-
-  -- "then generate a transaction with this TxIns (based on `genTxBodyContent`)"
-  tx2_bodyContent :: TxBodyContent BuildTx AlonzoEra <- forAll $ genTxBodyContent2 era tx2_ins1
-
-  -- "run your txScripts on this generated tx, and verify that the
-  -- initial generated plutus scripts are part of the function's
-  -- output."
-  case makeTransactionBody tx2_bodyContent :: Either TxBodyError (TxBody AlonzoEra) of
-    Left err -> fail $ "Second txBody: " <> displayError err
-    Right txBody -> let
-      hashesFound = map coerce $ ScriptTx.getTxBodyScripts txBody :: [ScriptHash]
-      in scriptHashes === hashesFound
+getTxBodyScriptsRoundtrip :: Property
+getTxBodyScriptsRoundtrip = property $ do
+  nScripts <- forAll $ Gen.integral (Range.linear 5 500)
+  txInsAndHashes <- replicateM nScripts $ forAll genPlutusScriptTxIn
+  let (txIns, scriptHashes) = unzip txInsAndHashes
+  txBody <- forAll $ genTxBodyWithTxIns AlonzoEra $ map (second BuildTxWith) txIns
+  let hashesFound = map coerce $ ScriptTx.getTxBodyScripts txBody :: [ScriptHash]
+  scriptHashes === hashesFound
 
 
 type TxIns build era = [(TxIn, BuildTxWith build (Witness WitCtxTxIn era))]
@@ -80,12 +58,23 @@ type TxIns build era = [(TxIn, BuildTxWith build (Witness WitCtxTxIn era))]
 panic :: String -> a
 panic = error
 
-genTxBodyContent2
+genTxBodyWithTxIns
+  :: IsCardanoEra era
+  => CardanoEra era
+  -> [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
+  -> Gen (TxBody era)
+genTxBodyWithTxIns era txIns = do
+  txBodyContent <- genTxBodyContentWithTxIns era txIns
+  let eitherTxBody = makeTransactionBody txBodyContent
+  case eitherTxBody of
+    Left err     -> fail $ displayError err
+    Right txBody -> pure txBody
+
+genTxBodyContentWithTxIns
   :: CardanoEra era
   -> [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
   -> Gen (TxBodyContent BuildTx era)
-genTxBodyContent2 era txIns = do
-  -- txIns <- map (, BuildTxWith (KeyWitness KeyWitnessForSpending)) <$> Gen.list (Range.constant 1 10) CGen.genTxIn
+genTxBodyContentWithTxIns era txIns = do
   txInsCollateral <- genTxInsCollateral era
   txOuts <- Gen.list (Range.constant 1 10) (CGen.genTxOut era)
   txFee <- genTxFee era
@@ -276,3 +265,7 @@ genTxInsCollateral era =
                           [ pure TxInsCollateralNone
                           , TxInsCollateral supported <$> Gen.list (Range.linear 0 10) CGen.genTxIn
                           ]
+
+genExecutionUnits :: Gen ExecutionUnits
+genExecutionUnits = ExecutionUnits <$> Gen.integral (Range.constant 0 1000)
+                                   <*> Gen.integral (Range.constant 0 1000)
