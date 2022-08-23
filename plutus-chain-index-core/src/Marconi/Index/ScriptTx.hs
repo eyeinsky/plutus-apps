@@ -90,13 +90,8 @@ getTxBodyScripts body = let
     maybeScriptHash :: Alonzo.Script era1 -> Maybe Shelley.ScriptHash
     maybeScriptHash script = case script of
       Alonzo.PlutusScript _ (sbs :: SBS.ShortByteString) -> let
-
-          -- | Use the ShortByteString to directly make a cardano-api script
-          mkCardanoApiScript :: SBS.ShortByteString -> C.Script C.PlutusScriptV1
-          mkCardanoApiScript = C.PlutusScript C.PlutusScriptV1 . Shelley.PlutusScriptSerialised
-
-          hash = C.hashScript $ mkCardanoApiScript sbs :: C.ScriptHash
-        in Just hash
+          script' = C.PlutusScript C.PlutusScriptV1 $ Shelley.PlutusScriptSerialised sbs :: Shelley.Script Shelley.PlutusScriptV1
+        in Just $ C.hashScript script'
       _ -> Nothing
 
 getTxScripts :: forall era . C.Tx era -> [ScriptAddress]
