@@ -61,7 +61,7 @@ genTxBodyContentWithTxInsCollateral era txIns txInsCollateral = do
   txMetadata <- genTxMetadataInEra era
   txAuxScripts <- genTxAuxScripts era
   let txExtraKeyWits = TxExtraKeyWitnessesNone --TODO: Alonzo era: Generate witness key hashes
-  txProtocolParams <- BuildTxWith <$> Gen.maybe CGen.genProtocolParameters
+  txProtocolParams <- BuildTxWith . Just <$> CGen.genProtocolParameters
   txWithdrawals <- genTxWithdrawals era
   txCertificates <- genTxCertificates era
   txUpdateProposal <- genTxUpdateProposal era
