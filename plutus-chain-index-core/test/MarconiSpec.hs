@@ -24,24 +24,6 @@ tests :: TestTree
 tests = testGroup "Marconi"
   [ testProperty "prop_script_hashes_in_tx_match" getTxBodyScriptsRoundtrip ]
 
-genPlutusScriptTxIn :: Gen ((TxIn, Witness WitCtxTxIn AlonzoEra), ScriptHash)
-genPlutusScriptTxIn = do
-  let plutusScriptVersion = PlutusScriptV1 :: PlutusScriptVersion PlutusScriptV1
-  script <- CGen.genPlutusScript plutusScriptVersion
-  scriptData <- CGen.genScriptData
-  executionUnits <- genExecutionUnits
-  let witness =
-        ScriptWitness ScriptWitnessForSpending
-          (PlutusScriptWitness
-           PlutusScriptV1InAlonzo
-           PlutusScriptV1
-           script
-           (ScriptDatumForTxIn scriptData)
-           scriptData
-           executionUnits)
-  txIn <- CGen.genTxIn
-  pure ((txIn, witness), hashScript $ PlutusScript PlutusScriptV1 script)
-
 getTxBodyScriptsRoundtrip :: Property
 getTxBodyScriptsRoundtrip = property $ do
   nScripts <- forAll $ Gen.integral (Range.linear 5 500)
@@ -50,13 +32,6 @@ getTxBodyScriptsRoundtrip = property $ do
   txBody <- forAll $ genTxBodyWithTxIns AlonzoEra $ map (second BuildTxWith) txIns
   let hashesFound = map coerce $ ScriptTx.getTxBodyScripts txBody :: [ScriptHash]
   scriptHashes === hashesFound
-
-
-type TxIns build era = [(TxIn, BuildTxWith build (Witness WitCtxTxIn era))]
--- ^ From /cardano-node/cardano-api/src/Cardano/Api/TxBody.hs
-
-panic :: String -> a
-panic = error
 
 genTxBodyWithTxIns
   :: IsCardanoEra era
@@ -106,11 +81,36 @@ genTxBodyContentWithTxIns era txIns = do
     , Api.txScriptValidity
     }
 
+genPlutusScriptTxIn :: Gen ((TxIn, Witness WitCtxTxIn AlonzoEra), ScriptHash)
+genPlutusScriptTxIn = do
+  let plutusScriptVersion = PlutusScriptV1 :: PlutusScriptVersion PlutusScriptV1
+  script <- CGen.genPlutusScript plutusScriptVersion
+  scriptData <- CGen.genScriptData
+  executionUnits <- genExecutionUnits
+  let witness =
+        ScriptWitness ScriptWitnessForSpending
+          (PlutusScriptWitness
+           PlutusScriptV1InAlonzo
+           PlutusScriptV1
+           script
+           (ScriptDatumForTxIn scriptData)
+           scriptData
+           executionUnits)
+  txIn <- CGen.genTxIn
+  pure ((txIn, witness), hashScript $ PlutusScript PlutusScriptV1 script)
+
+
+panic :: String -> a
+panic = error
+
 -- * Copy-paste
 
 -- | Following is from cardano-node commit
 -- 2b1d18c6c7b7142d9eebfec34da48840ed4409b6 (what plutus-apps main
 -- depends on) cardano-api/gen/Gen/Cardano/Api/Typed.hs
+
+type TxIns build era = [(TxIn, BuildTxWith build (Witness WitCtxTxIn era))]
+-- ^ From /cardano-node/cardano-api/src/Cardano/Api/TxBody.hs
 
 genTxBodyContent :: CardanoEra era -> Gen (TxBodyContent BuildTx era)
 genTxBodyContent era = do
