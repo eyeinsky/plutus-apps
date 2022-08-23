@@ -6,6 +6,11 @@ module MarconiSpec where
 import Control.Arrow
 import Control.Monad (replicateM)
 import Data.Coerce
+import Data.Int (Int64)
+import Data.Map (Map)
+import Data.Ratio
+import Data.Set qualified as S
+import Numeric.Natural (Natural)
 
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -15,6 +20,9 @@ import Test.Tasty.Hedgehog (testProperty)
 
 import Cardano.Api
 import Cardano.Api qualified as Api
+import Cardano.Api.Shelley
+import Plutus.V1.Ledger.Api qualified as Plutus
+
 import Gen.Cardano.Api.Metadata qualified as CGen
 import Gen.Cardano.Api.Typed qualified as CGen
 
@@ -34,7 +42,7 @@ getTxBodyScriptsRoundtrip = property $ do
 
   txBody <- forAll $ genTxBodyWithTxIns AlonzoEra (map (second BuildTxWith) txInsWitnesses) collateral
   let hashesFound = map coerce $ ScriptTx.getTxBodyScripts txBody :: [ScriptHash]
-  scriptHashes === hashesFound
+  assert $ S.fromList scriptHashes == S.fromList hashesFound
 
 genTxBodyWithTxIns
   :: IsCardanoEra era
@@ -61,7 +69,7 @@ genTxBodyContentWithTxInsCollateral era txIns txInsCollateral = do
   txMetadata <- genTxMetadataInEra era
   txAuxScripts <- genTxAuxScripts era
   let txExtraKeyWits = TxExtraKeyWitnessesNone --TODO: Alonzo era: Generate witness key hashes
-  txProtocolParams <- BuildTxWith . Just <$> CGen.genProtocolParameters
+  txProtocolParams <- BuildTxWith . Just <$> genProtocolParameters
   txWithdrawals <- genTxWithdrawals era
   txCertificates <- genTxCertificates era
   txUpdateProposal <- genTxUpdateProposal era
@@ -239,3 +247,71 @@ genTxInsCollateral era =
 genExecutionUnits :: Gen ExecutionUnits
 genExecutionUnits = ExecutionUnits <$> Gen.integral (Range.constant 0 1000)
                                    <*> Gen.integral (Range.constant 0 1000)
+
+genNat :: Gen Natural
+genNat = Gen.integral (Range.linear 0 10)
+
+genProtocolParameters :: Gen ProtocolParameters
+genProtocolParameters =
+  ProtocolParameters
+    <$> ((,) <$> genNat <*> genNat)
+    <*> CGen.genRational
+    <*> CGen.genMaybePraosNonce
+    <*> genNat
+    <*> genNat
+    <*> genNat
+    <*> genNat
+    <*> genNat
+    <*> Gen.maybe CGen.genLovelace
+    <*> CGen.genLovelace
+    <*> CGen.genLovelace
+    <*> CGen.genLovelace
+    <*> genEpochNo
+    <*> genNat
+    <*> genRationalInt64
+    <*> CGen.genRational
+    <*> CGen.genRational
+    <*> (Just <$> CGen.genLovelace)
+    <*> genCostModels
+    <*> (Just <$> genExecutionUnitPrices)
+    <*> (Just <$> genExecutionUnits)
+    <*> (Just <$> genExecutionUnits)
+    <*> (Just <$> genNat)
+    <*> (Just <$> genNat)
+    <*> (Just <$> genNat)
+
+genExecutionUnitPrices :: Gen ExecutionUnitPrices
+genExecutionUnitPrices = ExecutionUnitPrices <$> CGen.genRational <*> CGen.genRational
+
+-- TODO: consolidate this back to just genRational once this is merged:
+-- https://github.com/input-output-hk/cardano-ledger-specs/pull/2330
+genRationalInt64 :: Gen Rational
+genRationalInt64 =
+    (\d -> ratioToRational (1 % d)) <$> genDenominator
+  where
+    genDenominator :: Gen Int64
+    genDenominator = Gen.integral (Range.linear 1 maxBound)
+
+    ratioToRational :: Ratio Int64 -> Rational
+    ratioToRational = toRational
+
+genEpochNo :: Gen EpochNo
+genEpochNo = EpochNo <$> Gen.word64 (Range.linear 0 10)
+
+genCostModels :: Gen (Map AnyPlutusScriptVersion CostModel)
+genCostModels =
+    Gen.map (Range.linear 0 (length plutusScriptVersions))
+            ((,) <$> Gen.element plutusScriptVersions
+                 <*> genCostModel)
+  where
+    plutusScriptVersions :: [AnyPlutusScriptVersion]
+    plutusScriptVersions = [minBound..maxBound]
+
+genCostModel :: Gen CostModel
+genCostModel = case Plutus.defaultCostModelParams of
+  Nothing -> panic "Plutus defaultCostModelParams is broken."
+  Just dcm ->
+      CostModel
+    -- TODO This needs to be the cost model struct for whichever
+    -- Plutus version we're using, once we support multiple Plutus versions.
+    <$> mapM (const $ Gen.integral (Range.linear 0 5000)) dcm
