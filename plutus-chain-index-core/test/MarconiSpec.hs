@@ -27,9 +27,12 @@ tests = testGroup "Marconi"
 getTxBodyScriptsRoundtrip :: Property
 getTxBodyScriptsRoundtrip = property $ do
   nScripts <- forAll $ Gen.integral (Range.linear 5 500)
-  txInsAndHashes <- replicateM nScripts $ forAll genPlutusScriptTxIn
-  let (txIns, scriptHashes) = unzip txInsAndHashes
-  txBody <- forAll $ genTxBodyWithTxIns AlonzoEra $ map (second BuildTxWith) txIns
+  txInsAndHashes <- replicateM nScripts $ forAll  genPlutusScriptTxIn
+  let (txInsWitnesses, scriptHashes) = unzip txInsAndHashes
+      txIns = map fst txInsWitnesses
+      collateral = TxInsCollateral CollateralInAlonzoEra txIns :: TxInsCollateral AlonzoEra
+
+  txBody <- forAll $ genTxBodyWithTxIns AlonzoEra (map (second BuildTxWith) txInsWitnesses) collateral
   let hashesFound = map coerce $ ScriptTx.getTxBodyScripts txBody :: [ScriptHash]
   scriptHashes === hashesFound
 
@@ -37,20 +40,21 @@ genTxBodyWithTxIns
   :: IsCardanoEra era
   => CardanoEra era
   -> [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
+  -> TxInsCollateral era
   -> Gen (TxBody era)
-genTxBodyWithTxIns era txIns = do
-  txBodyContent <- genTxBodyContentWithTxIns era txIns
+genTxBodyWithTxIns era txIns collateral = do
+  txBodyContent <- genTxBodyContentWithTxInsCollateral era txIns collateral
   let eitherTxBody = makeTransactionBody txBodyContent
   case eitherTxBody of
     Left err     -> fail $ displayError err
     Right txBody -> pure txBody
 
-genTxBodyContentWithTxIns
+genTxBodyContentWithTxInsCollateral
   :: CardanoEra era
   -> [(TxIn, BuildTxWith BuildTx (Witness WitCtxTxIn era))]
+  -> TxInsCollateral era
   -> Gen (TxBodyContent BuildTx era)
-genTxBodyContentWithTxIns era txIns = do
-  txInsCollateral <- genTxInsCollateral era
+genTxBodyContentWithTxInsCollateral era txIns txInsCollateral = do
   txOuts <- Gen.list (Range.constant 1 10) (CGen.genTxOut era)
   txFee <- genTxFee era
   txValidityRange <- genTxValidityRange era
