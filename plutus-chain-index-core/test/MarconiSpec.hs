@@ -116,40 +116,6 @@ panic = error
 type TxIns build era = [(TxIn, BuildTxWith build (Witness WitCtxTxIn era))]
 -- ^ From /cardano-node/cardano-api/src/Cardano/Api/TxBody.hs
 
-genTxBodyContent :: CardanoEra era -> Gen (TxBodyContent BuildTx era)
-genTxBodyContent era = do
-  txIns <- map (, BuildTxWith (KeyWitness KeyWitnessForSpending)) <$> Gen.list (Range.constant 1 10) CGen.genTxIn
-  txInsCollateral <- genTxInsCollateral era
-  txOuts <- Gen.list (Range.constant 1 10) (CGen.genTxOut era)
-  txFee <- genTxFee era
-  txValidityRange <- genTxValidityRange era
-  txMetadata <- genTxMetadataInEra era
-  txAuxScripts <- genTxAuxScripts era
-  let txExtraKeyWits = TxExtraKeyWitnessesNone --TODO: Alonzo era: Generate witness key hashes
-  txProtocolParams <- BuildTxWith <$> Gen.maybe CGen.genProtocolParameters
-  txWithdrawals <- genTxWithdrawals era
-  txCertificates <- genTxCertificates era
-  txUpdateProposal <- genTxUpdateProposal era
-  txMintValue <- genTxMintValue era
-  txScriptValidity <- genTxScriptValidity era
-
-  pure $ TxBodyContent
-    { Api.txIns
-    , Api.txInsCollateral
-    , Api.txOuts
-    , Api.txFee
-    , Api.txValidityRange
-    , Api.txMetadata
-    , Api.txAuxScripts
-    , Api.txExtraKeyWits
-    , Api.txProtocolParams
-    , Api.txWithdrawals
-    , Api.txCertificates
-    , Api.txUpdateProposal
-    , Api.txMintValue
-    , Api.txScriptValidity
-    }
-
 genTxScriptValidity :: CardanoEra era -> Gen (TxScriptValidity era)
 genTxScriptValidity era = case txScriptValiditySupportedInCardanoEra era of
   Nothing      -> pure TxScriptValidityNone
