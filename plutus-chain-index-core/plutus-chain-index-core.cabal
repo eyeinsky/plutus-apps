@@ -88,6 +88,9 @@ library
     , cardano-api
     , cardano-ledger-alonzo
     , cardano-ledger-byron
+    , cardano-ledger-core
+    , cardano-ledger-shelley
+    , cardano-ledger-shelley-ma
     , io-classes
     , iohk-monitoring
     , ouroboros-consensus

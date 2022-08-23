@@ -11,6 +11,9 @@ module Marconi.Index.ScriptTx where
 import Cardano.Api (SlotNo)
 import Cardano.Api qualified as C
 import Cardano.Ledger.Alonzo.Scripts qualified as Alonzo
+import Cardano.Ledger.Crypto qualified as LedgerCrypto
+import Cardano.Ledger.Shelley.Scripts qualified as LedgerShelley
+import Cardano.Ledger.ShelleyMA.Timelocks qualified as ShelleyMA
 import Data.ByteString.Short qualified as SBS
 
 import Cardano.Api.Shelley qualified as Shelley
@@ -80,19 +83,23 @@ getTxBodyScripts body = let
     hashesMaybe = case body of
       Shelley.ShelleyTxBody shelleyBasedEra _body scripts' _scriptData _auxData _validity ->
           case shelleyBasedEra of
-            (C.ShelleyBasedEraAlonzo :: era0) -> map maybeScriptHash scripts'
-            _                                 -> []
+            C.ShelleyBasedEraAlonzo -> flip map scripts' $ \script -> case script of
+              Alonzo.PlutusScript _ (sbs :: SBS.ShortByteString) -> let
+                  script' :: Shelley.Script Shelley.PlutusScriptV1
+                  script' = C.PlutusScript C.PlutusScriptV1 $ Shelley.PlutusScriptSerialised sbs
+                in Just $ C.hashScript script'
+              Alonzo.TimelockScript _ -> Nothing
+
+            C.ShelleyBasedEraShelley -> flip map scripts' $ \(multisig :: LedgerShelley.MultiSig LedgerCrypto.StandardCrypto) ->
+              undefined $ LedgerShelley.getMultiSigBytes multisig
+
+            C.ShelleyBasedEraAllegra -> flip map scripts' $ \(ShelleyMA.TimelockConstr _) -> undefined
+
+            C.ShelleyBasedEraMary -> flip map scripts' $ \_ -> undefined
+
       _ -> []
     hashes = catMaybes hashesMaybe :: [Shelley.ScriptHash]
   in map ScriptAddress hashes
-
-  where
-    maybeScriptHash :: Alonzo.Script era1 -> Maybe Shelley.ScriptHash
-    maybeScriptHash script = case script of
-      Alonzo.PlutusScript _ (sbs :: SBS.ShortByteString) -> let
-          script' = C.PlutusScript C.PlutusScriptV1 $ Shelley.PlutusScriptSerialised sbs :: Shelley.Script Shelley.PlutusScriptV1
-        in Just $ C.hashScript script'
-      _ -> Nothing
 
 getTxScripts :: forall era . C.Tx era -> [ScriptAddress]
 getTxScripts (C.Tx txBody _ws) = getTxBodyScripts txBody
