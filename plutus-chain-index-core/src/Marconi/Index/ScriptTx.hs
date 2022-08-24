@@ -2,34 +2,30 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 
 
 module Marconi.Index.ScriptTx where
 
-import Cardano.Api (SlotNo)
-import Cardano.Api qualified as C
-import Cardano.Ledger.Alonzo.Scripts qualified as Alonzo
-import Cardano.Ledger.Crypto qualified as LedgerCrypto
-import Cardano.Ledger.Shelley.Scripts qualified as LedgerShelley
-import Cardano.Ledger.ShelleyMA.Timelocks qualified as ShelleyMA
-import Data.ByteString.Short qualified as SBS
-
-import Cardano.Api.Shelley qualified as Shelley
 import Codec.Serialise (deserialiseOrFail)
 import Control.Lens.Operators ((^.))
 import Data.ByteString qualified as BS
-
 import Data.Foldable (forM_)
 import Data.Maybe (catMaybes, fromJust)
+import GHC.Generics (Generic)
+
 import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField qualified as SQL
 import Database.SQLite.Simple.ToField qualified as SQL
-import GHC.Generics (Generic)
+
+import Cardano.Api (SlotNo)
+import Cardano.Api qualified as C
+import Cardano.Api.Script qualified as C
+import Cardano.Api.Shelley qualified as Shelley
 import Plutus.HystericalScreams.Index.VSqlite (SqliteIndex)
 import Plutus.HystericalScreams.Index.VSqlite qualified as Ix
-
 
 newtype Depth = Depth Int
 
@@ -81,23 +77,10 @@ getTxBodyScripts :: C.TxBody era -> [ScriptAddress]
 getTxBodyScripts body = let
     hashesMaybe :: [Maybe C.ScriptHash]
     hashesMaybe = case body of
-      Shelley.ShelleyTxBody shelleyBasedEra _body scripts' _scriptData _auxData _validity ->
-          case shelleyBasedEra of
-            C.ShelleyBasedEraAlonzo -> flip map scripts' $ \script -> case script of
-              Alonzo.PlutusScript _ (sbs :: SBS.ShortByteString) -> let
-                  script' :: Shelley.Script Shelley.PlutusScriptV1
-                  script' = C.PlutusScript C.PlutusScriptV1 $ Shelley.PlutusScriptSerialised sbs
-                in Just $ C.hashScript script'
-              Alonzo.TimelockScript _ -> Nothing
-
-            C.ShelleyBasedEraShelley -> flip map scripts' $ \(multisig :: LedgerShelley.MultiSig LedgerCrypto.StandardCrypto) ->
-              undefined $ LedgerShelley.getMultiSigBytes multisig
-
-            C.ShelleyBasedEraAllegra -> flip map scripts' $ \(ShelleyMA.TimelockConstr _) -> undefined
-
-            C.ShelleyBasedEraMary -> flip map scripts' $ \_ -> undefined
-
-      _ -> []
+      Shelley.ShelleyTxBody shelleyBasedEra _ scripts _ _ _ -> flip map scripts $ \script ->
+        case C.fromShelleyBasedScript shelleyBasedEra script of
+          Shelley.ScriptInEra _ script' -> Just $ C.hashScript script'
+      _ -> [] -- ^ Byron transactions have no scripts
     hashes = catMaybes hashesMaybe :: [Shelley.ScriptHash]
   in map ScriptAddress hashes
 

@@ -8,7 +8,7 @@ packages: doc
           plutus-chain-index-core
           plutus-contract
           plutus-example
-          plutus-hysterical-screams 
+          plutus-hysterical-screams
           plutus-contract-certification
           plutus-ledger
           plutus-ledger-constraints
@@ -167,8 +167,8 @@ source-repository-package
 -- Currently tracking v1.34.1.
 source-repository-package
   type: git
-  location: https://github.com/input-output-hk/cardano-node
-  tag: 2b1d18c6c7b7142d9eebfec34da48840ed4409b6
+  location: git@github.com:eyeinsky/cardano-node.git
+  tag: 5230a2072db2fe6a8fc38d8c422029873d74005e
   subdir:
     cardano-api
     cardano-cli
