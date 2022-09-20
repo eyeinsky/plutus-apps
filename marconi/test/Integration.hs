@@ -48,6 +48,7 @@ import Testnet.Cardano qualified as TN
 import Testnet.Conf qualified as TC (Conf (..), ProjectBase (ProjectBase), YamlFilePath (YamlFilePath), mkConf)
 
 import Marconi.Index.ScriptTx qualified as M
+import Marconi.Indexer2 qualified as M2
 import Marconi.Indexers qualified as M
 import Marconi.Logging ()
 
@@ -101,7 +102,7 @@ testIndex = H.integration . HE.runFinallies . HE.workspace "chairman" $ \tempAbs
     let chainPoint = C.ChainPointAtGenesis :: C.ChainPoint
     c <- defaultConfigStdout
     withTrace c "marconi" $ \trace -> let
-      chainSync = withChainSyncEventStream socketPathAbs networkId chainPoint
+      chainSync = withChainSyncEventStream socketPathAbs networkId chainPoint :: _
       indexer = M.combineIndexers [(M.scriptTxWorker (\_ update -> writeScriptUpdate update $> []), sqliteDb)]
       handleException NoIntersectionFound = logError trace $ renderStrict $ layoutPretty defaultLayoutOptions $
         "No intersection found for chain point" <+> pretty chainPoint <> "."
