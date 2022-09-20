@@ -49,6 +49,7 @@ library
     Marconi.Indexers
     Marconi.Logging
     Marconi.Orphans
+    Marconi.Streaming.ChainSync
 
   --------------------
   -- Local components
@@ -80,12 +81,15 @@ library
     , lens
     , mwc-random
     , prettyprinter
+    , primitive
     , serialise
     , sqlite-simple
     , stm
     , streaming
     , text
     , time
+    , transformers
+    , vector
 
 executable marconi
   import:         lang
