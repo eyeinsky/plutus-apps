@@ -10,13 +10,11 @@ module Integration (tests) where
 
 import Codec.Serialise (serialise)
 import Control.Concurrent qualified as IO
-import Control.Concurrent.STM qualified as IO
-import Control.Exception (catch)
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Short qualified as SBS
-import Data.Functor (($>))
+import Data.Function ((&))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map qualified as Map
 import Data.Set qualified as Set
@@ -38,24 +36,16 @@ import Test.Tasty.Hedgehog (testProperty)
 
 import Cardano.Api qualified as C
 import Cardano.Api.Shelley qualified as C
-import Cardano.BM.Setup (withTrace)
-import Cardano.BM.Trace (logError)
-import Cardano.BM.Tracing (defaultConfigStdout)
-import Cardano.Streaming (ChainSyncEventException (NoIntersectionFound), withChainSyncEventStream)
 import Gen.Cardano.Api.Typed qualified as CGen
 import Ouroboros.Network.Protocol.LocalTxSubmission.Type (SubmitResult (SubmitFail, SubmitSuccess))
 import Plutus.V1.Ledger.Scripts qualified as Plutus
 import PlutusTx qualified
-import Prettyprinter (defaultLayoutOptions, layoutPretty, pretty, (<+>))
-import Prettyprinter.Render.Text (renderStrict)
 import Test.Base qualified as H
 import Testnet.Cardano qualified as TN
 import Testnet.Conf qualified as TC (Conf (..), ProjectBase (ProjectBase), YamlFilePath (YamlFilePath), mkConf)
 
-import Hedgehog.Extras qualified as H
-import Marconi.Index.ScriptTx qualified as ScriptTx
-import Marconi.Indexers qualified as M
-import Marconi.Logging ()
+import Marconi.Indexers.ScriptTx qualified as M
+import Marconi.Streaming.ChainSync qualified as M
 
 tests :: TestTree
 tests = testGroup "Integration"
@@ -85,33 +75,20 @@ testIndex = H.integration . HE.runFinallies . workspace "chairman" $ \tempAbsBas
   -- can write index updates to it and we can await for them (also
   -- making us not need threadDelay)
   indexedTxs <- liftIO IO.newChan
-  let writeScriptUpdate (ScriptTx.ScriptTxUpdate txScripts _slotNo) = case txScripts of
+  let writeScriptUpdate (M.ScriptTxUpdate txScripts _slotNo) = case txScripts of
         (x : xs) -> IO.writeChan indexedTxs $ x :| xs
         _        -> pure ()
 
   -- Start indexer
-  let sqliteDb = tempAbsPath </> "script-tx.db"
-  indexer <- liftIO $ do
-
-    coordinator <- M.initialCoordinator 1
-    ch <- IO.atomically . IO.dupTChan $ M._channel coordinator
-    (loop, indexer) <- M.scriptTxWorker_ (\_ update -> writeScriptUpdate update $> []) (ScriptTx.Depth 0) coordinator ch sqliteDb
-
-    -- Receive ChainSyncEvents and pass them on to indexer's channel
-    void $ IO.forkIO $ do
-      let chainPoint = C.ChainPointAtGenesis :: C.ChainPoint
-      c <- defaultConfigStdout
-      withTrace c "marconi" $ \trace -> let
-        indexerWorker = withChainSyncEventStream socketPathAbs networkId chainPoint $ S.mapM_ $
-          \chainSyncEvent -> IO.atomically $ IO.writeTChan ch chainSyncEvent
-        handleException NoIntersectionFound = logError trace $ renderStrict $ layoutPretty defaultLayoutOptions $
-          "No intersection found for chain point" <+> pretty chainPoint <> "."
-        in indexerWorker `catch` handleException :: IO ()
-
-    -- Start indexer worker loop
-    void $ IO.forkIO loop
-
-    return indexer
+  let db = tempAbsPath </> "script-tx.db"
+  void $ liftIO $ IO.forkIO $ do
+    M.chainEventSource socketPathAbs networkId C.ChainPointAtGenesis -- create ChainSyncEvent stream from socket
+      & M.toScriptTx -- convert generic ChainSyncEvent-s to ScriptTxUpdate-s (the latter is what the indexer expects)
+      -- & M.rollbackRingBuffer 3 -- although rollbacks to further back than buffered throw an exception, then for this test it doesn't happen
+      & M.ignoreRollbacks
+      & M.sqlite db -- write updates to an sqlite database
+      & S.chain writeScriptUpdate -- write updates to a Chan on which we can block on until they are persisted to the database
+      & S.effects
 
   utxoVKeyFile <- H.note $ tempAbsPath </> "shelley/utxo-keys/utxo1.vkey"
   utxoSKeyFile <- H.note $ tempAbsPath </> "shelley/utxo-keys/utxo1.skey"
@@ -275,37 +252,13 @@ testIndex = H.integration . HE.runFinallies . workspace "chairman" $ \tempAbsBas
 
   submitTx localNodeConnectInfo tx2
 
-
-  {- Test if what the indexer got is what we sent.
-
-  We test both of (1) what we get from `onInsert` callback and (2)
-  with `query` (what ends up in the sqlite database). For the `query`
-  we currently need to use threadDelay and poll to query the database
-  because the indexer runs in a separate thread and there is no way
-  of awaiting the data to be flushed into the database. -}
-
-  (ScriptTx.TxCbor tx, indexedScriptHashes) :| _ <- liftIO $ IO.readChan indexedTxs
-
-  ScriptTx.ScriptAddress indexedScriptHash <- headM indexedScriptHashes
+  (M.TxCbor tx, indexedScriptHashes) :| _ <- liftIO $ IO.readChan indexedTxs
+  M.ScriptAddress indexedScriptHash <- headM indexedScriptHashes
 
   indexedTx2 :: C.Tx C.AlonzoEra <- H.leftFail $ C.deserialiseFromCBOR (C.AsTx C.AsAlonzoEra) tx
 
   plutusScriptHash === indexedScriptHash
   tx2 === indexedTx2
-
-  -- The query poll
-  queriedTx2 :: C.Tx C.AlonzoEra <- do
-    let
-      queryLoop n = do
-        H.threadDelay 250_000 -- wait 250ms before querying
-        txCbors <- liftIO $ ScriptTx.query indexer (ScriptTx.ScriptAddress plutusScriptHash) []
-        case txCbors of
-          result : _ -> pure result
-          _          -> queryLoop (n + 1)
-    ScriptTx.TxCbor txCbor <- queryLoop (0 :: Integer)
-    H.leftFail $ C.deserialiseFromCBOR (C.AsTx C.AsAlonzoEra) txCbor
-
-  tx2 === queriedTx2
 
 -- * Helpers
 
@@ -370,4 +323,3 @@ workspace prefixPath f = GHC.withFrozenCallStack $ do
   f ws
   when (IO.os /= "mingw32" && maybeKeepWorkspace /= Just "1") $ do
     H.evalIO $ IO.removeDirectoryRecursive ws
-

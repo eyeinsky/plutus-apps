@@ -2,20 +2,24 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeOperators              #-}
 
 module Marconi.Indexers.ScriptTx where
 
 import Codec.Serialise (deserialiseOrFail)
-import Control.Lens.Operators ((^.))
+import Control.Monad.Trans.Class (lift)
 import Data.ByteString qualified as BS
 import Data.Foldable (forM_, toList)
-import Data.Maybe (catMaybes, fromJust)
+import Data.Function ((&))
+import Data.Maybe (catMaybes)
 import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField qualified as SQL
 import Database.SQLite.Simple.ToField qualified as SQL
 import GHC.Generics (Generic)
+import Streaming.Prelude qualified as S
 
 import Cardano.Api (SlotNo)
 import Cardano.Api qualified as C
@@ -31,9 +35,10 @@ import Cardano.Ledger.Crypto qualified as LedgerCrypto
 import Cardano.Ledger.Keys qualified as LedgerShelley
 import Cardano.Ledger.Shelley.Scripts qualified as LedgerShelley
 import Cardano.Ledger.ShelleyMA.Timelocks qualified as Timelock
+import Cardano.Streaming (ChainSyncEvent (RollBackward, RollForward))
+import Ledger.Tx.CardanoAPI (withIsCardanoEra)
 
-import RewindableIndex.Index.VSqlite (SqliteIndex)
-import RewindableIndex.Index.VSqlite qualified as Ix
+import Marconi.Streaming.ChainSync (chainEventSource, rollbackRingBuffer)
 
 newtype Depth = Depth Int
 
@@ -63,18 +68,10 @@ instance SQL.FromField ScriptAddress where
 instance SQL.ToRow ScriptTxRow where
   toRow o = [SQL.toField $ scriptAddress o, SQL.toField $ txCbor o]
 
--- * Indexer
-
-type Query = ScriptAddress
-type Result = [TxCbor]
-
 data ScriptTxUpdate = ScriptTxUpdate
   { txScripts :: [(TxCbor, [ScriptAddress])]
   , slotNo    :: !SlotNo
   } deriving (Show)
-
-type ScriptTxIndex = SqliteIndex ScriptTxUpdate () Query Result
-
 
 toUpdate :: forall era . C.IsCardanoEra era => [C.Tx era] -> SlotNo -> ScriptTxUpdate
 toUpdate txs = ScriptTxUpdate txScripts'
@@ -95,46 +92,51 @@ getTxBodyScripts body = let
 getTxScripts :: forall era . C.Tx era -> [ScriptAddress]
 getTxScripts (C.Tx txBody _ws) = getTxBodyScripts txBody
 
-open :: (ScriptTxIndex -> ScriptTxUpdate -> IO [()]) -> FilePath -> Depth -> IO ScriptTxIndex
-open onInsert dbPath (Depth k) = do
-  ix <- fromJust <$> Ix.newBoxed query store onInsert k ((k + 1) * 2) dbPath
-  let c = ix ^. Ix.handle
-  SQL.execute_ c "CREATE TABLE IF NOT EXISTS script_transactions (scriptAddress TEXT NOT NULL, txCbor BLOB NOT NULL)"
-  SQL.execute_ c "CREATE INDEX IF NOT EXISTS script_address ON script_transactions (scriptAddress)"
-  pure ix
+-- | Convert ChainSyncEvent stream to a stream of ScriptTxUpdates
+toScriptTx
+  :: S.Stream (S.Of (ChainSyncEvent (C.BlockInMode C.CardanoMode))) IO r
+  -> S.Stream (S.Of (ChainSyncEvent ScriptTxUpdate)) IO r
+toScriptTx = S.map $ \case
+  RollForward (C.BlockInMode (C.Block (C.BlockHeader slotNo' _ _) txs) era) ct -> do
+    withIsCardanoEra era (RollForward (toUpdate txs slotNo') ct)
+  RollBackward cp ct -> RollBackward cp ct
 
-  where
-    store :: ScriptTxIndex -> IO ()
-    store ix = do
-      buffered <- Ix.getBuffer $ ix ^. Ix.storage
-      let rows = do
-            ScriptTxUpdate txScriptAddrs _slotNo <- buffered
+-- | Sqlite back-end for @ScriptTxUpdate@s. Persisted updates are yielded onwards.
+sqlite :: FilePath -> S.Stream (S.Of ScriptTxUpdate) IO r -> S.Stream (S.Of ScriptTxUpdate) IO r
+sqlite db source = do
+  connection <- lift $ do
+    c <- SQL.open db
+    SQL.execute_ c "CREATE TABLE IF NOT EXISTS script_transactions (scriptAddress TEXT NOT NULL, txCbor BLOB NOT NULL)"
+    SQL.execute_ c "CREATE INDEX IF NOT EXISTS script_address ON script_transactions (scriptAddress)"
+    pure c
+
+  let loop source' = lift (S.next source') >>= \case
+        Left r -> pure r
+        Right (scriptTxUpdate, source'') -> let
+          ScriptTxUpdate txScriptAddrs _slotNo = scriptTxUpdate
+          rows = do
             (txCbor', scriptAddrs) <- txScriptAddrs
             scriptAddr <- scriptAddrs
             pure $ ScriptTxRow scriptAddr txCbor'
-      SQL.execute_ (ix ^. Ix.handle) "BEGIN"
-      forM_ rows $
-        SQL.execute (ix ^. Ix.handle) "INSERT INTO script_transactions (scriptAddress, txCbor) VALUES (?, ?)"
-      SQL.execute_ (ix ^. Ix.handle) "COMMIT"
+          in do
+          lift $ forM_ rows $ SQL.execute connection "INSERT INTO script_transactions (scriptAddress, txCbor) VALUES (?, ?)"
+          S.yield scriptTxUpdate
+          loop source''
 
-query :: ScriptTxIndex -> Query -> [ScriptTxUpdate] -> IO Result
-query ix scriptAddress' memory = let
-    filterByScriptAddress :: [ScriptTxUpdate] -> [TxCbor]
-    filterByScriptAddress updates' = do
-      ScriptTxUpdate update _slotNo <- updates'
-      map fst $ filter (\(_, addrs) -> scriptAddress' `elem` addrs) update
-  in do
-  persisted :: [SQL.Only TxCbor] <- SQL.query (ix ^. Ix.handle)
-    "SELECT txCbor FROM script_transactions WHERE scriptAddress = ?" (SQL.Only scriptAddress')
+  loop source
 
-  buffered <- Ix.getBuffer $ ix ^. Ix.storage
-  let
-    both :: [TxCbor]
-    both = filterByScriptAddress memory
-      <> filterByScriptAddress buffered
-      <> map (\(SQL.Only txCbor') -> txCbor') persisted
 
-  return both
+{- | The indexer itself:
+       - source chain sync events from @socket@
+       - buffer them until @n@
+       - write them to an sqlite database at @db@
+-}
+indexer :: FilePath -> C.NetworkId -> Shelley.ChainPoint -> FilePath -> IO ()
+indexer socket networkId chainPoint db = chainEventSource socket networkId chainPoint
+  & toScriptTx
+  & rollbackRingBuffer 2160
+  & sqlite db
+  & S.effects
 
 -- * Copy-paste
 --

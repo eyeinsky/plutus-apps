@@ -22,7 +22,7 @@ import Gen.Cardano.Api.Metadata qualified as CGen
 import Gen.Cardano.Api.Typed qualified as CGen
 import Plutus.V1.Ledger.Api qualified as Plutus
 
-import Marconi.Index.ScriptTx qualified as ScriptTx
+import Marconi.Indexers.ScriptTx qualified as ScriptTx
 
 import Integration qualified
 
