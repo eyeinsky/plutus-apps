@@ -17,7 +17,7 @@ import Cardano.Api qualified as C
 import Cardano.Api.Shelley qualified as Shelley
 import Gen.Cardano.Api.Typed qualified as CGen
 
-import Marconi.Index.ScriptTx qualified as ScriptTx
+import Marconi.Indexers.ScriptTx qualified as ScriptTx
 
 import Integration qualified
 
