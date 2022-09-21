@@ -15,11 +15,13 @@ import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Short qualified as SBS
+import Data.Function ((&))
 import Data.Functor (($>))
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import GHC.Stack qualified as GHC
+import Streaming.Prelude qualified as S
 import System.Directory qualified as IO
 import System.FilePath ((</>))
 
@@ -47,9 +49,8 @@ import Test.Base qualified as H
 import Testnet.Cardano qualified as TN
 import Testnet.Conf qualified as TC (Conf (..), ProjectBase (ProjectBase), YamlFilePath (YamlFilePath), mkConf)
 
-import Marconi.Index.ScriptTx qualified as M
-import Marconi.Indexer2 qualified as M2
-import Marconi.Indexers qualified as M
+import Marconi.Indexers.ScriptTx qualified as M
+-- import Marconi.Indexers qualified as M
 import Marconi.Logging ()
 
 tests :: TestTree
@@ -97,16 +98,14 @@ testIndex = H.integration . HE.runFinallies . HE.workspace "chairman" $ \tempAbs
         _        -> pure ()
 
   -- Start indexer
-  let sqliteDb = tempAbsPath </> "script-tx.db"
   void $ liftIO $ IO.forkIO $ do
-    let chainPoint = C.ChainPointAtGenesis :: C.ChainPoint
-    c <- defaultConfigStdout
-    withTrace c "marconi" $ \trace -> let
-      chainSync = withChainSyncEventStream socketPathAbs networkId chainPoint :: _
-      indexer = M.combineIndexers [(M.scriptTxWorker (\_ update -> writeScriptUpdate update $> []), sqliteDb)]
-      handleException NoIntersectionFound = logError trace $ renderStrict $ layoutPretty defaultLayoutOptions $
-        "No intersection found for chain point" <+> pretty chainPoint <> "."
-      in chainSync indexer `catch` handleException :: IO ()
+    M2.chainEventSource socketPathAbs networkId C.ChainPointAtGenesis
+      & M.toScriptTx
+      & S.mapM (\e -> case e of
+                   M2.Forward scriptTxUpdate -> writeScriptUpdate scriptTxUpdate $> e
+                   M2.Rollback _             -> pure e
+               )
+      & M.sqlite (tempAbsPath </> "script-tx.db")
 
   utxoVKeyFile <- H.note $ tempAbsPath </> "shelley/utxo-keys/utxo1.vkey"
   utxoSKeyFile <- H.note $ tempAbsPath </> "shelley/utxo-keys/utxo1.skey"

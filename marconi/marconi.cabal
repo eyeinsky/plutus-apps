@@ -158,5 +158,6 @@ test-suite marconi-test
     , hedgehog-extras
     , prettyprinter
     , serialise
+    , streaming
     , tasty
     , tasty-hedgehog
