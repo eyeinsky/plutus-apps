@@ -2,20 +2,23 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeOperators              #-}
 
 module Marconi.Indexers.ScriptTx where
 
 import Codec.Serialise (deserialiseOrFail)
-import Control.Lens.Operators ((^.))
 import Data.ByteString qualified as BS
 import Data.Foldable (forM_, toList)
-import Data.Maybe (catMaybes, fromJust)
+import Data.Function ((&))
+import Data.Maybe (catMaybes)
 import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField qualified as SQL
 import Database.SQLite.Simple.ToField qualified as SQL
 import GHC.Generics (Generic)
+import Streaming.Prelude qualified as S
 
 import Cardano.Api (SlotNo)
 import Cardano.Api qualified as C
@@ -31,9 +34,11 @@ import Cardano.Ledger.Crypto qualified as LedgerCrypto
 import Cardano.Ledger.Keys qualified as LedgerShelley
 import Cardano.Ledger.Shelley.Scripts qualified as LedgerShelley
 import Cardano.Ledger.ShelleyMA.Timelocks qualified as Timelock
+import Ledger.Tx.CardanoAPI (withIsCardanoEra)
+import Plutus.Streaming (ChainSyncEvent (RollBackward, RollForward))
 
-import RewindableIndex.Index.VSqlite (SqliteIndex)
-import RewindableIndex.Index.VSqlite qualified as Ix
+import Marconi.Streaming.ChainSync (chainEventSource)
+import Marconi.Streaming.Util (ringBuffer, (:->))
 
 newtype Depth = Depth Int
 
@@ -43,38 +48,10 @@ newtype TxCbor = TxCbor BS.ByteString
   deriving (Show)
   deriving newtype (SQL.ToField, SQL.FromField)
 
--- * SQLite
-
-data ScriptTxRow = ScriptTxRow
-  { scriptAddress :: !ScriptAddress
-  , txCbor        :: !TxCbor
-  } deriving (Generic)
-
-instance SQL.ToField ScriptAddress where
-  toField (ScriptAddress hash)  = SQL.SQLBlob . Shelley.serialiseToRawBytes $ hash
-instance SQL.FromField ScriptAddress where
-  fromField f = SQL.fromField f >>=
-    either
-      (const cantDeserialise)
-      (\b -> maybe cantDeserialise (return . ScriptAddress) $ Shelley.deserialiseFromRawBytes Shelley.AsScriptHash b) . deserialiseOrFail
-    where
-      cantDeserialise = SQL.returnError SQL.ConversionFailed f "Cannot deserialise address."
-
-instance SQL.ToRow ScriptTxRow where
-  toRow o = [SQL.toField $ scriptAddress o, SQL.toField $ txCbor o]
-
--- * Indexer
-
-type Query = ScriptAddress
-type Result = [TxCbor]
-
 data ScriptTxUpdate = ScriptTxUpdate
   { txScripts :: [(TxCbor, [ScriptAddress])]
   , slotNo    :: !SlotNo
   } deriving (Show)
-
-type ScriptTxIndex = SqliteIndex ScriptTxUpdate () Query Result
-
 
 toUpdate :: forall era . C.IsCardanoEra era => [C.Tx era] -> SlotNo -> ScriptTxUpdate
 toUpdate txs = ScriptTxUpdate txScripts'
@@ -95,44 +72,68 @@ getTxBodyScripts body = let
 getTxScripts :: forall era . C.Tx era -> [ScriptAddress]
 getTxScripts (C.Tx txBody _ws) = getTxBodyScripts txBody
 
-open :: (ScriptTxIndex -> ScriptTxUpdate -> IO [()]) -> FilePath -> Depth -> IO ScriptTxIndex
-open onInsert dbPath (Depth k) = do
-  ix <- fromJust <$> Ix.newBoxed query store onInsert k ((k + 1) * 2) dbPath
-  let c = ix ^. Ix.handle
-  SQL.execute_ c "CREATE TABLE IF NOT EXISTS script_transactions (scriptAddress TEXT NOT NULL, txCbor BLOB NOT NULL)"
-  SQL.execute_ c "CREATE INDEX IF NOT EXISTS script_address ON script_transactions (scriptAddress)"
-  pure ix
+-- | Convert ChainSyncEvent stream to a stream of ScriptTxUpdates
+toScriptTx :: ChainSyncEvent (C.BlockInMode C.CardanoMode) :-> ChainSyncEvent ScriptTxUpdate
+toScriptTx = S.map $ \case
+  RollForward (C.BlockInMode (C.Block (C.BlockHeader slotNo' _ _) txs) era) ct -> do
+    withIsCardanoEra era (RollForward (toUpdate txs slotNo') ct)
+  RollBackward cp ct -> RollBackward cp ct
 
+-- * SQLite store
+
+data ScriptTxRow = ScriptTxRow
+  { scriptAddress :: !ScriptAddress
+  , txCbor        :: !TxCbor
+  } deriving (Generic)
+
+instance SQL.ToField ScriptAddress where
+  toField (ScriptAddress hash)  = SQL.SQLBlob . Shelley.serialiseToRawBytes $ hash
+instance SQL.FromField ScriptAddress where
+  fromField f = SQL.fromField f >>=
+    either
+      (const cantDeserialise)
+      (\b -> maybe cantDeserialise (return . ScriptAddress) $ Shelley.deserialiseFromRawBytes Shelley.AsScriptHash b) . deserialiseOrFail
+    where
+      cantDeserialise = SQL.returnError SQL.ConversionFailed f "Cannot deserialise address."
+
+instance SQL.ToRow ScriptTxRow where
+  toRow o = [SQL.toField $ scriptAddress o, SQL.toField $ txCbor o]
+
+sqlite :: FilePath -> S.Stream (S.Of ScriptTxUpdate) IO r -> IO ()
+sqlite db = S.foldM_ step init_ done
   where
-    store :: ScriptTxIndex -> IO ()
-    store ix = do
-      buffered <- Ix.getBuffer $ ix ^. Ix.storage
-      let rows = do
-            ScriptTxUpdate txScriptAddrs _slotNo <- buffered
-            (txCbor', scriptAddrs) <- txScriptAddrs
-            scriptAddr <- scriptAddrs
-            pure $ ScriptTxRow scriptAddr txCbor'
-      forM_ rows $
-        SQL.execute (ix ^. Ix.handle) "INSERT INTO script_transactions (scriptAddress, txCbor) VALUES (?, ?)"
+    init_ :: IO SQL.Connection
+    init_ = do
+      c <- SQL.open db
+      SQL.execute_ c "CREATE TABLE IF NOT EXISTS script_transactions (scriptAddress TEXT NOT NULL, txCbor BLOB NOT NULL)"
+      SQL.execute_ c "CREATE INDEX IF NOT EXISTS script_address ON script_transactions (scriptAddress)"
+      pure c
 
-    query :: ScriptTxIndex -> Query -> [ScriptTxUpdate] -> IO Result
-    query ix scriptAddress' memory = let
-        filterByScriptAddress :: [ScriptTxUpdate] -> [TxCbor]
-        filterByScriptAddress updates' = do
-          ScriptTxUpdate update _slotNo <- updates'
-          map fst $ filter (\(_, addrs) -> scriptAddress' `elem` addrs) update
+    step :: SQL.Connection -> ScriptTxUpdate -> IO SQL.Connection
+    step c scriptTxUpdate = let
+      ScriptTxUpdate txScriptAddrs _slotNo = scriptTxUpdate
+      rows = do
+        (txCbor', scriptAddrs) <- txScriptAddrs
+        scriptAddr <- scriptAddrs
+        pure $ ScriptTxRow scriptAddr txCbor'
       in do
-      persisted :: [SQL.Only TxCbor] <- SQL.query (ix ^. Ix.handle)
-        "SELECT txCbor FROM utxos WHERE scriptAddress = ?" (SQL.Only scriptAddress')
+        forM_ rows $
+          SQL.execute c "INSERT INTO script_transactions (scriptAddress, txCbor) VALUES (?, ?)"
+        pure c
 
-      buffered <- Ix.getBuffer $ ix ^. Ix.storage
-      let
-        both :: [TxCbor]
-        both = filterByScriptAddress memory
-          <> filterByScriptAddress buffered
-          <> map (\(SQL.Only txCbor') -> txCbor') persisted
+    done = SQL.close
 
-      return both
+{- | The indexer itself:
+       - source chain sync events from @socket@
+       - buffer them until @n@
+       - write them to an sqlite database at @db@
+-}
+indexer :: FilePath -> C.NetworkId -> Shelley.ChainPoint -> FilePath -> IO ()
+indexer socket networkId chainPoint db = chainEventSource socket networkId chainPoint
+  & toScriptTx
+  & ringBuffer 2160
+  & (undefined :: ChainSyncEvent ScriptTxUpdate :-> ScriptTxUpdate) -- todo
+  & sqlite db
 
 -- * Copy-paste
 --

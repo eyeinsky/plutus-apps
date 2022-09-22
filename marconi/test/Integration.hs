@@ -50,6 +50,8 @@ import Testnet.Cardano qualified as TN
 import Testnet.Conf qualified as TC (Conf (..), ProjectBase (ProjectBase), YamlFilePath (YamlFilePath), mkConf)
 
 import Marconi.Indexers.ScriptTx qualified as M
+import Marconi.Streaming.ChainSync qualified as M
+import Marconi.Streaming.Util
 -- import Marconi.Indexers qualified as M
 import Marconi.Logging ()
 
@@ -99,12 +101,10 @@ testIndex = H.integration . HE.runFinallies . HE.workspace "chairman" $ \tempAbs
 
   -- Start indexer
   void $ liftIO $ IO.forkIO $ do
-    M2.chainEventSource socketPathAbs networkId C.ChainPointAtGenesis
+    M.chainEventSource socketPathAbs networkId C.ChainPointAtGenesis
       & M.toScriptTx
-      & S.mapM (\e -> case e of
-                   M2.Forward scriptTxUpdate -> writeScriptUpdate scriptTxUpdate $> e
-                   M2.Rollback _             -> pure e
-               )
+      & M.ignoreRollbacks
+      & S.mapM (\(scriptTxUpdate, _) -> writeScriptUpdate scriptTxUpdate $> scriptTxUpdate)
       & M.sqlite (tempAbsPath </> "script-tx.db")
 
   utxoVKeyFile <- H.note $ tempAbsPath </> "shelley/utxo-keys/utxo1.vkey"
