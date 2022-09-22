@@ -5,7 +5,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 
-module Marconi.Index.ScriptTx where
+module Marconi.Indexers.ScriptTx where
 
 import Codec.Serialise (deserialiseOrFail)
 import Control.Lens.Operators ((^.))

@@ -44,9 +44,9 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Marconi.Index.Datum
-    Marconi.Index.ScriptTx
     Marconi.Index.Utxo
     Marconi.Indexers
+    Marconi.Indexers.ScriptTx
     Marconi.Logging
     Marconi.Orphans
     Marconi.Streaming.ChainSync

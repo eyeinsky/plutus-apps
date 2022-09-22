@@ -28,7 +28,6 @@ import Ledger.Tx.CardanoAPI (fromCardanoTxId, fromCardanoTxIn, fromCardanoTxOut,
                              scriptDataFromCardanoTxBody, withIsCardanoEra)
 import Marconi.Index.Datum (DatumIndex)
 import Marconi.Index.Datum qualified as Datum
-import Marconi.Index.ScriptTx qualified as ScriptTx
 import Marconi.Index.Utxo (UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
 import Marconi.Index.Utxo qualified as Utxo
 import Plutus.Streaming (ChainSyncEvent (RollBackward, RollForward))
@@ -142,24 +141,6 @@ utxoWorker Coordinator{_barrier} ch path = Utxo.open path (Utxo.Depth 2160) >>= 
               offset <- findIndex  (\u -> (u ^. Utxo.slotNo) < slot) events
               Ix.rewind offset index
 
-scriptTxWorker :: (ScriptTx.ScriptTxIndex -> ScriptTx.ScriptTxUpdate -> IO [()]) -> Worker
-scriptTxWorker onInsert Coordinator{_barrier} ch path = ScriptTx.open onInsert path (ScriptTx.Depth 2160) >>= loop
-  where
-    loop :: ScriptTx.ScriptTxIndex -> IO ()
-    loop index = do
-      signalQSemN _barrier 1
-      event <- atomically $ readTChan ch
-      case event of
-        RollForward (BlockInMode (Block (BlockHeader slotNo _ _) txs :: Block era) era :: BlockInMode CardanoMode) _ct -> do
-          withIsCardanoEra era (Ix.insert (ScriptTx.toUpdate txs slotNo) index >>= loop)
-        RollBackward cp _ct -> do
-          events <- Ix.getEvents (index ^. Ix.storage)
-          loop $
-            fromMaybe index $ do
-              slot   <- chainPointToSlotNo cp
-              offset <- findIndex  (\u -> ScriptTx.slotNo u < slot) events
-              Ix.rewind offset index
-
 combinedIndexer
   :: Maybe FilePath
   -> Maybe FilePath
@@ -171,7 +152,7 @@ combinedIndexer utxoPath datumPath scriptTxPath = combineIndexers remainingIndex
     liftMaybe (worker, maybePath) = case maybePath of
       Just path -> Just (worker, path)
       _         -> Nothing
-    pairs = [(utxoWorker, utxoPath), (datumWorker, datumPath), (scriptTxWorker (\_ _ -> pure []), scriptTxPath)]
+    pairs = [(utxoWorker, utxoPath), (datumWorker, datumPath)]
     remainingIndexers = mapMaybe liftMaybe pairs
 
 combineIndexers
