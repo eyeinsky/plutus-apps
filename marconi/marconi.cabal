@@ -147,6 +147,9 @@ test-suite marconi-test
     , plutus-ledger-api
     , plutus-tx
 
+  ghc-options:    -fobject-code
+  build-depends:  plutus-tx-plugin
+
   ------------------------
   -- Non-IOG dependencies
   ------------------------

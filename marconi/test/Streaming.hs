@@ -10,6 +10,10 @@ import Test.Tasty.Hedgehog (testProperty)
 
 tests :: TestTree
 tests = testGroup "Streaming"
-  [ testProperty "prop_ring_buffer" testRingBuffer ]
+  [ testProperty "prop_ring_buffer" testRingBuffer
+--  , testProperty "prop_rollback_ring_buffer" testRollbackRingBuffer
+  ]
 
 testRingBuffer = undefined
+
+testRollbackRingBuffer = undefined

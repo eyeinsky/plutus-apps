@@ -15,7 +15,7 @@ import Streaming.Prelude qualified as S
 -- stream of @b@'s.
 type a :-> b = forall r . S.Stream (S.Of a) IO r -> S.Stream (S.Of b) IO r
 
-type Vec a = VG.Mutable V.Vector (PrimState IO) a
+type Vec = VG.Mutable V.Vector (PrimState IO)
 
 -- | Ring buffer of @n@ elements: blocks until @n@-th element, then
 -- yields older elements as new ones are written to the buffer.
