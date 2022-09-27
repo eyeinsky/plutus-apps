@@ -46,6 +46,7 @@ library
     Marconi.Indexers
     Marconi.Indexers.Datum
     Marconi.Indexers.ScriptTx
+    Marconi.Indexers.StakePoolDelegation
     Marconi.Indexers.Utxo
     Marconi.Logging
     Marconi.Orphans
