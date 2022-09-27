@@ -37,48 +37,6 @@ import Marconi.Types (TargetAddresses, TxOut, TxOutRef, pattern CurrentEra, txOu
 import RewindableIndex.Index.VSplit qualified as Ix
 
 
--- UtxoIndexer
-getOutputs
-  :: C.IsCardanoEra era
-  => Maybe TargetAddresses
-  -> C.Tx era
-  -> Maybe [ (TxOut, TxOutRef) ]
-getOutputs maybeTargetAddresses (C.Tx txBody@(C.TxBody C.TxBodyContent{C.txOuts}) _) =
-    do
-        let indexersFilter = case maybeTargetAddresses of
-                Just targetAddresses -> filter (isInTargetTxOut targetAddresses)
-                _                    -> id -- no filtering is applied
-        outs  <- either (const Nothing) Just
-            . traverse (C.eraCast CurrentEra)
-            . indexersFilter
-            $ txOuts
-        pure $ outs & imap
-            (\ix out -> (out, txOutRef (C.getTxId txBody) (C.TxIx $ fromIntegral ix)))
-getInputs
-  :: C.Tx era
-  -> Set C.TxIn
-getInputs (C.Tx (C.TxBody C.TxBodyContent{C.txIns, C.txScriptValidity, C.txInsCollateral}) _) =
-  let inputs = case txScriptValidityToScriptValidity txScriptValidity of
-        C.ScriptValid -> fst <$> txIns
-        C.ScriptInvalid -> case txInsCollateral of
-                                C.TxInsCollateralNone     -> []
-                                C.TxInsCollateral _ txins -> txins
-  in Set.fromList inputs
-
-getUtxoUpdate
-  :: C.IsCardanoEra era
-  => SlotNo
-  -> [C.Tx era]
-  -> Maybe TargetAddresses
-  -> UtxoUpdate
-getUtxoUpdate slot txs maybeAddresses =
-  let ins  = foldl' Set.union Set.empty $ getInputs <$> txs
-      outs = concat . catMaybes $ getOutputs maybeAddresses <$> txs
-  in  UtxoUpdate { _inputs  = ins
-                 , _outputs = outs
-                 , _slotNo  = slot
-                 }
-
 {- | The way we synchronise channel consumption is by waiting on a QSemN for each
      of the spawn indexers to finish processing the current event.
 
