@@ -1,43 +1,29 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE OverloadedStrings  #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Marconi.Indexers.Datum
-  ( -- * DatumIndex
-    DatumIndex
-  , Event
-  , Query
-  , Result
-  , Notification
-  , Depth(..)
-  , open
-  ) where
+module Marconi.Indexers.Datum where
 
-import Codec.Serialise (Serialise (encode), deserialiseOrFail, serialise)
-import Control.Applicative ((<|>))
-import Control.Lens.Operators ((^.))
+import Codec.Serialise (deserialiseOrFail, serialise)
+import Control.Monad.Trans.Class (lift)
 import Data.ByteString.Lazy (toStrict)
-import Data.Foldable (find)
-import Data.Maybe (fromJust, listToMaybe)
-import Database.SQLite.Simple (Only (Only), SQLData (SQLBlob, SQLInteger))
+import Data.Foldable (forM_)
+import Data.String (fromString)
+import Database.SQLite.Simple (SQLData (SQLBlob, SQLInteger, SQLText))
 import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField (FromField (fromField), ResultError (ConversionFailed), returnError)
 import Database.SQLite.Simple.ToField (ToField (toField))
+import Streaming.Prelude qualified as S
 
-import Cardano.Api qualified as C
-import Cardano.Binary (fromCBOR, toCBOR)
-import Codec.Serialise.Class (Serialise (decode))
-import RewindableIndex.Index.VSqlite (SqliteIndex)
-import RewindableIndex.Index.VSqlite qualified as Ix
+import Cardano.Api (SlotNo (SlotNo))
+import Plutus.V1.Ledger.Api (Datum, DatumHash)
 
 type DatumHash    = C.Hash C.ScriptData
 type Event        = [(C.SlotNo, (DatumHash, C.ScriptData))]
 type Query        = DatumHash
-type Result       = Maybe C.ScriptData
-type Notification = ()
-
-type DatumIndex = SqliteIndex Event Notification Query Result
+type Result       = Maybe Datum
 
 newtype Depth = Depth Int
 
@@ -68,53 +54,28 @@ instance FromField C.SlotNo where
 instance ToField C.SlotNo where
   toField (C.SlotNo s) = SQLInteger $ fromIntegral s
 
-open
-  :: FilePath
-  -> Depth
-  -> IO DatumIndex
-open dbPath (Depth k) = do
-  ix <- fromJust <$> Ix.newBoxed query store onInsert k ((k + 1) * 2) dbPath
-  let c = ix ^. Ix.handle
-  SQL.execute_ c "CREATE TABLE IF NOT EXISTS kv_datumhsh_datum (datumHash TEXT PRIMARY KEY, datum BLOB, slotNo INT)"
-  pure ix
+sqlite :: FilePath -> S.Stream (S.Of Event) IO r -> S.Stream (S.Of Event) IO r
+sqlite db source = do
+  connection <- lift $ do
+    c <- SQL.open db
+    SQL.execute_ c "CREATE TABLE IF NOT EXISTS kv_datumhsh_datum (datumHash TEXT PRIMARY KEY, datum BLOB, slotNo INT)"
+    pure c
 
--- | This function is used to query the data stored in the indexer as a whole:
---   data that can still change (through rollbacks), buffered data and stored data.
---
---   Here is a query that takes into account all received events:
---   > getEvents (ix ^. storage) >>= query ix <hash>
---
---   Here is a query that only takes into account stored events:
---   > query ix <hash> []
-query
-  :: DatumIndex -- ^ The indexer
-  -> Query      -- ^ The query is a `DatumHash`
-  -> [Event]    -- ^ The list of events that we want to query on top of whatever is settled.
-  -> IO Result  -- ^ The result is an optional datum.
-query ix hsh es = memoryResult <|> sqliteResult
-  where
-    -- TODO: Consider buffered events
-    memoryResult :: IO Result
-    memoryResult = do
-      bufferedEvents <- Ix.getBuffer (ix ^. Ix.storage)
-      pure $ snd . snd <$> find ((== hsh) . fst . snd) (concat $ es ++ bufferedEvents)
-    sqliteResult :: IO Result
-    sqliteResult = do
-      result <- SQL.query (ix ^. Ix.handle) "SELECT datum from kv_datumhsh_datum WHERE datumHash = ?" (Only hsh)
-      pure $ head <$> listToMaybe result
-
-store :: DatumIndex -> IO ()
-store ix = do
-  let c = ix ^. Ix.handle
-  SQL.execute_ c "BEGIN"
-  Ix.getBuffer (ix ^. Ix.storage) >>=
-    mapM_ ( SQL.execute c "INSERT INTO kv_datumhsh_datum (slotNo, datumHash, datum) VALUES (?,?,?) ON CONFLICT(datumHash) DO UPDATE SET slotNo = ?"
-          . unpack)
-    . concat
-  SQL.execute_ c "COMMIT"
-  where
-    unpack :: (C.SlotNo, (DatumHash, C.ScriptData)) -> (C.SlotNo, DatumHash, C.ScriptData, C.SlotNo)
+  let
+    unpack :: (SlotNo, (DatumHash, Datum)) -> (SlotNo, DatumHash, Datum, SlotNo)
     unpack (s, (h, d)) = (s, h, d, s)
 
-onInsert :: DatumIndex -> Event -> IO [Notification]
-onInsert _ _ = pure []
+    loop source' = lift (S.next source') >>= \case
+      Left r -> pure r
+      Right (event, source'') -> let
+        event' = map unpack event
+        in do
+        lift $ do
+          SQL.execute_ connection "BEGIN"
+          forM_ event' $ SQL.execute connection
+            "INSERT INTO kv_datumhsh_datum (slotNo, datumHash, datum) VALUES (?,?,?) ON CONFLICT(datumHash) DO UPDATE SET slotNo = ?"
+          SQL.execute_ connection "COMMIT"
+        S.yield event
+        loop source''
+
+  loop source
