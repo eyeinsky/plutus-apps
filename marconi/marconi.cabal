@@ -44,7 +44,6 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Marconi.CLI
-    Marconi.Indexers
     Marconi.Indexers.Datum
     Marconi.Indexers.ScriptTx
     Marconi.Indexers.StakePoolDelegation
