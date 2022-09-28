@@ -12,6 +12,7 @@ module Marconi.Indexers.ScriptTx where
 import Codec.Serialise (deserialiseOrFail)
 import Control.Monad.Trans.Class (lift)
 import Data.ByteString qualified as BS
+import Data.Coerce (coerce)
 import Data.Foldable (forM_, toList)
 import Data.Function ((&))
 import Data.Maybe (catMaybes)
@@ -124,6 +125,13 @@ sqlite db source = do
           loop source''
 
   loop source
+
+query :: FilePath -> ScriptAddress -> IO [TxCbor]
+query db scriptAddress' = do
+  c <- SQL.open db
+  persisted :: [SQL.Only TxCbor] <- SQL.query c
+    "SELECT txCbor FROM script_transactions WHERE scriptAddress = ?" (SQL.Only scriptAddress')
+  return $ map coerce persisted
 
 
 {- | The indexer itself:
