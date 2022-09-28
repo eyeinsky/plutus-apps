@@ -1,20 +1,15 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
-<<<<<<< HEAD
 {-# LANGUAGE FlexibleInstances  #-}
-=======
 {-# LANGUAGE GADTs              #-}
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NamedFieldPuns     #-}
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE PatternSynonyms    #-}
 {-# LANGUAGE TemplateHaskell    #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE GADTs              #-}
 
-<<<<<<< HEAD
 module Marconi.Indexers.Utxo
   ( -- * UtxoIndex
     UtxoIndex
@@ -32,9 +27,6 @@ module Marconi.Indexers.Utxo
   , reference
   , TxOut
   ) where
-=======
-module Marconi.Indexers.Utxo where
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
 
 import Cardano.Api (SlotNo, TxIn (TxIn))
 import Cardano.Api qualified as C
@@ -43,14 +35,6 @@ import Control.Lens.Operators ((&), (^.))
 import Control.Lens.TH (makeLenses)
 
 import Control.Monad (when)
-<<<<<<< HEAD
-import Data.Foldable (forM_, toList)
-import Data.Maybe (fromJust)
-import Data.Set (Set)
-import Data.Set qualified as Set
-import Data.String (fromString)
-import Database.SQLite.Simple (Only (Only), SQLData (SQLBlob, SQLInteger, SQLText))
-=======
 import Control.Monad.Trans.Class (lift)
 import Data.ByteString.Lazy (toStrict)
 import Data.Foldable (foldl', forM_, toList)
@@ -59,26 +43,13 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.String (fromString)
 import Database.SQLite.Simple (SQLData (SQLBlob, SQLText))
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
 import Database.SQLite.Simple qualified as SQL
 import Database.SQLite.Simple.FromField (FromField (fromField), ResultError (ConversionFailed), returnError)
 import Database.SQLite.Simple.FromRow (FromRow (fromRow), field)
 import Database.SQLite.Simple.ToField (ToField (toField))
 import Database.SQLite.Simple.ToRow (ToRow (toRow))
 import GHC.Generics (Generic)
-<<<<<<< HEAD
-import System.Random.MWC (createSystemRandom, uniformR)
-
-import RewindableIndex.Index.VSqlite (SqliteIndex)
-import RewindableIndex.Index.VSqlite qualified as Ix
-
-import Marconi.Types (CurrentEra, TxOut, TxOutRef, txOutRef)
-
-=======
 import Streaming.Prelude qualified as S
--- TODO Remove the following dependencies from plutus-ledger, and
--- then also the package dependency from this package's cabal
--- file. Tracked with: https://input-output.atlassian.net/browse/PLT-777
 import Cardano.Api qualified as C
 import Control.Lens.Operators ((<&>))
 import Data.Maybe (catMaybes)
@@ -88,7 +59,7 @@ import Ledger.Tx.CardanoAPI (fromCardanoTxId, fromCardanoTxIn, fromCardanoTxOut,
 import Marconi.Streaming.ChainSync (chainEventSource, rollbackRingBuffer)
 import System.Random.MWC (createSystemRandom, uniformR)
 
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
+
 data UtxoUpdate = UtxoUpdate
   { _inputs  :: !(Set TxIn)
   , _outputs :: ![(TxOut, TxOutRef)]
@@ -99,11 +70,8 @@ $(makeLenses ''UtxoUpdate)
 
 type Result = Maybe [TxOutRef]
 
-<<<<<<< HEAD
 type UtxoIndex = SqliteIndex UtxoUpdate () C.AddressAny Result
 
-=======
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
 newtype Depth = Depth Int
 
 instance FromField C.AddressAny where
@@ -164,31 +132,6 @@ getOutputs maybeTargetAddresses (C.Tx txBody@(C.TxBody C.TxBodyContent{C.txOuts}
                                           , txOutRefIdx = ix
                                      }))
 
-<<<<<<< HEAD
-query
-  :: UtxoIndex
-  -> C.AddressAny
-  -> [UtxoUpdate]
-  -> IO Result
-query ix addr updates = do
-  -- SELECT all utxos that have not been spent.
-  let c = ix ^. Ix.handle
-  -- Create indexes initially. When created this should be a no-op.
-  SQL.execute_ c "CREATE INDEX IF NOT EXISTS utxo_address ON utxos (address)"
-  SQL.execute_ c "CREATE INDEX IF NOT EXISTS utxo_refs ON utxos (txId, inputIx)"
-  SQL.execute_ c "CREATE INDEX IF NOT EXISTS spent_refs ON spent (txId, inputIx)"
-
-  -- Perform the db query
-  storedUtxos <- SQL.query c "SELECT address, txId, inputIx FROM utxos LEFT JOIN spent ON utxos.txId = spent.txId AND utxos.inputIx = spent.inputIx WHERE utxos.txId IS NULL AND utxos.address = ?" (Only addr)
-  let memoryUtxos  = concatMap (filter (onlyAt addr) . toRows) updates
-      spentOutputs = foldMap _inputs updates
-  buffered <- Ix.getBuffer $ ix ^. Ix.storage
-  let bufferedUtxos = concatMap (filter (onlyAt addr) . toRows) buffered
-  pure . Just $ storedUtxos ++ bufferedUtxos ++ memoryUtxos
-              -- Remove utxos that have been spent (from memory db).
-              & filter (\u -> not (_reference u `Set.member` spentOutputs))
-              & map _reference
-=======
 getInputs
   :: C.Tx era
   -> Set TxOutRef
@@ -213,7 +156,6 @@ getUtxoUpdate slot txs addresses =
                  , _outputs = outs
                  , _slotNo  = slot
                  }
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
 
 sqlite :: FilePath -> S.Stream (S.Of UtxoUpdate) IO r -> S.Stream (S.Of UtxoUpdate) IO r
 sqlite db source = do
@@ -249,22 +191,6 @@ sqlite db source = do
           S.yield utxoUpdate
           loop source''
 
-<<<<<<< HEAD
-toRows :: UtxoUpdate -> [UtxoRow]
-toRows update = update ^. outputs
-  & map (\(C.TxOut addr _ _ _, ref) ->
-        UtxoRow { _address   = toAddr addr
-                , _reference = ref
-                })
-  where
-    toAddr :: C.AddressInEra CurrentEra -> C.AddressAny
-    toAddr (C.AddressInEra C.ByronAddressInAnyEra addr)    = C.AddressByron addr
-    toAddr (C.AddressInEra (C.ShelleyAddressInEra _) addr) = C.AddressShelley addr
-
-
-onlyAt :: C.AddressAny -> UtxoRow -> Bool
-onlyAt address' row = address' == row ^. address
-=======
   loop source
 
   where
@@ -293,4 +219,3 @@ isTargetTxOut :: TargetAddresses -> C.TxOut C.CtxTx era -> Bool
 isTargetTxOut targetAddresses (C.TxOut address' _ _) = case  address' of
     (C.AddressInEra  (C.ShelleyAddressInEra _) addr) -> addr `elem` targetAddresses
     _                                                -> False
->>>>>>> 75716116b (Adapt Marconi.Indexers.Utxo)
