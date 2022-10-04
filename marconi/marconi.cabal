@@ -45,9 +45,9 @@ library
   exposed-modules:
     Marconi.CLI
     Marconi.Index.Datum
-    Marconi.Index.ScriptTx
     Marconi.Index.Utxo
     Marconi.Indexers
+    Marconi.Indexers.ScriptTx
     Marconi.Logging
     Marconi.Orphans
     Marconi.Streaming.ChainSync
