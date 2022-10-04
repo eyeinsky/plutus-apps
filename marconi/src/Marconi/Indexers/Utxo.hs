@@ -5,7 +5,7 @@
 {-# LANGUAGE TemplateHaskell    #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Marconi.Index.Utxo
+module Marconi.Indexers.Utxo
   ( -- * UtxoIndex
     UtxoIndex
   , Depth(..)

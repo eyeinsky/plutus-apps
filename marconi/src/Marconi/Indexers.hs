@@ -28,11 +28,11 @@ import Cardano.Streaming (ChainSyncEvent (RollBackward, RollForward))
 import Ledger (TxIn (TxIn), TxOut, TxOutRef (TxOutRef, txOutRefId, txOutRefIdx), txInRef)
 import Ledger.Scripts (Datum, DatumHash)
 import Ledger.Tx.CardanoAPI (fromCardanoTxId, fromCardanoTxIn, fromCardanoTxOut, fromTxScriptValidity,
-                             scriptDataFromCardanoTxBody, withIsCardanoEra)
-import Marconi.Index.Datum (DatumIndex)
-import Marconi.Index.Datum qualified as Datum
-import Marconi.Index.Utxo (UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
-import Marconi.Index.Utxo qualified as Utxo
+                             scriptDataFromCardanoTxBody)
+import Marconi.Indexers.Datum (DatumIndex)
+import Marconi.Indexers.Datum qualified as Datum
+import Marconi.Indexers.Utxo (UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
+import Marconi.Indexers.Utxo qualified as Utxo
 import RewindableIndex.Index.VSplit qualified as Ix
 
 -- DatumIndexer
