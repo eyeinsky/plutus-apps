@@ -31,7 +31,6 @@ import Ledger.Tx.CardanoAPI (fromCardanoTxId, fromCardanoTxIn, fromCardanoTxOut,
                              scriptDataFromCardanoTxBody, withIsCardanoEra)
 import Marconi.Index.Datum (DatumIndex)
 import Marconi.Index.Datum qualified as Datum
-import Marconi.Index.ScriptTx qualified as ScriptTx
 import Marconi.Index.Utxo (UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
 import Marconi.Index.Utxo qualified as Utxo
 import RewindableIndex.Index.VSplit qualified as Ix
@@ -156,49 +155,18 @@ utxoWorker maybeTargetAddresses Coordinator{_barrier} ch path = Utxo.open path (
               offset <- findIndex  (\u -> (u ^. Utxo.slotNo) < slot) events
               Ix.rewind offset index
 
-scriptTxWorker_
-  :: (ScriptTx.ScriptTxIndex -> ScriptTx.ScriptTxUpdate -> IO [()])
-  -> ScriptTx.Depth
-  -> Coordinator -> TChan (ChainSyncEvent (BlockInMode CardanoMode)) -> FilePath -> IO (IO (), ScriptTx.ScriptTxIndex)
-scriptTxWorker_ onInsert depth Coordinator{_barrier} ch path = do
-  indexer <- ScriptTx.open onInsert path depth
-  pure (loop indexer, indexer)
-  where
-    loop :: ScriptTx.ScriptTxIndex -> IO ()
-    loop index = do
-      signalQSemN _barrier 1
-      event <- atomically $ readTChan ch
-      case event of
-        RollForward (BlockInMode (Block (BlockHeader slotNo _ _) txs :: Block era) era :: BlockInMode CardanoMode) _ct -> do
-          withIsCardanoEra era (Ix.insert (ScriptTx.toUpdate txs slotNo) index >>= loop)
-        RollBackward cp _ct -> do
-          events <- Ix.getEvents (index ^. Ix.storage)
-          loop $
-            fromMaybe index $ do
-              slot   <- chainPointToSlotNo cp
-              offset <- findIndex  (\u -> ScriptTx.slotNo u < slot) events
-              Ix.rewind offset index
-
-scriptTxWorker
-  :: (ScriptTx.ScriptTxIndex -> ScriptTx.ScriptTxUpdate -> IO [()])
-  -> Worker
-scriptTxWorker onInsert coordinator ch path = do
-  (loop, _) <- scriptTxWorker_ onInsert (ScriptTx.Depth 2160) coordinator ch path
-  loop
-
 combinedIndexer
   :: Maybe FilePath
-  -> Maybe FilePath
   -> Maybe FilePath
   -> Maybe TargetAddresses
   -> S.Stream (S.Of (ChainSyncEvent (BlockInMode CardanoMode))) IO r
   -> IO ()
-combinedIndexer utxoPath datumPath scriptTxPath maybeTargetAddresses = combineIndexers remainingIndexers
+combinedIndexer utxoPath datumPath maybeTargetAddresses = combineIndexers remainingIndexers
   where
     liftMaybe (worker, maybePath) = case maybePath of
       Just path -> Just (worker, path)
       _         -> Nothing
-    pairs = [(utxoWorker maybeTargetAddresses, utxoPath), (datumWorker, datumPath), (scriptTxWorker (\_ _ -> pure []), scriptTxPath)]
+    pairs = [(utxoWorker maybeTargetAddresses, utxoPath), (datumWorker, datumPath)]
     remainingIndexers = mapMaybe liftMaybe pairs
 
 combineIndexers
