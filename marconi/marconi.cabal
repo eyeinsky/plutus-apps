@@ -44,10 +44,10 @@ library
   hs-source-dirs:  src
   exposed-modules:
     Marconi.CLI
-    Marconi.Index.Datum
-    Marconi.Index.Utxo
     Marconi.Indexers
+    Marconi.Indexers.Datum
     Marconi.Indexers.ScriptTx
+    Marconi.Indexers.Utxo
     Marconi.Logging
     Marconi.Orphans
     Marconi.Streaming.ChainSync

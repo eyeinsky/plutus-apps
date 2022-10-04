@@ -31,11 +31,11 @@ import "cardano-api" Cardano.Api.Shelley qualified as Shelley
 import Cardano.Ledger.Alonzo.TxWitness qualified as Alonzo
 import Cardano.Streaming (ChainSyncEvent (RollBackward, RollForward))
 
-import Marconi.Index.Datum (DatumIndex)
-import Marconi.Index.Datum qualified as Datum
-import Marconi.Index.Utxo (TxOut, UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
-import Marconi.Index.Utxo qualified as Utxo
-import Marconi.Types (TargetAddresses, TxOutRef, pattern CurrentEra, txOutRef)
+import Marconi.Indexers.Datum (DatumIndex)
+import Marconi.Indexers.Datum qualified as Datum
+import Marconi.Indexers.Utxo (UtxoIndex, UtxoUpdate (UtxoUpdate, _inputs, _outputs, _slotNo))
+import Marconi.Indexers.Utxo qualified as Utxo
+import Marconi.Types (TargetAddresses, TxOut, TxOutRef, pattern CurrentEra, txOutRef)
 
 import RewindableIndex.Index.VSplit qualified as Ix
 

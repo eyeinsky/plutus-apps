@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Marconi.Index.Datum
+module Marconi.Indexers.Datum
   ( -- * DatumIndex
     DatumIndex
   , Event

@@ -8,7 +8,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE GADTs              #-}
 
-module Marconi.Index.Utxo
+module Marconi.Indexers.Utxo
   ( -- * UtxoIndex
     UtxoIndex
   , Depth(..)
