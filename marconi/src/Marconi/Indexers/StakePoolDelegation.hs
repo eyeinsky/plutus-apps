@@ -2,12 +2,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Marconi.Indexers.StakePoolDelegation where
 
+import Control.Monad (void)
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Except (runExceptT)
 import Data.Foldable (forM_)
 import Data.Function ((&))
 import Data.Maybe qualified as P
 import Database.SQLite.Simple qualified as SQL
 import Streaming.Prelude qualified as S
+import System.IO
 
 import Cardano.Api qualified as C
 import Cardano.Api.Shelley qualified as Shelley
@@ -77,3 +80,29 @@ indexer socket networkId chainPoint db = chainEventSource  socket networkId chai
   & rollbackRingBuffer 2160
   & sqlite db
   & S.effects
+
+
+type A = Int
+
+hot :: IO ()
+hot = let
+  preview = ( "/home/markus/preview/socket/node.socket" :: FilePath
+            , "/home/markus/preview/config/config.json" :: FilePath )
+
+  preprod = ( "/home/markus/preprod/socket/node.socket" :: FilePath
+            , "/home/markus/preprod/config/config.json" :: FilePath )
+
+  mainnet = ( "/home/markus/cardano/socket/node.socket" :: FilePath
+            , "/home/markus/cardano/config/config.json" :: FilePath )
+
+  (socketPath, nodeConfig) = mainnet
+
+  go :: C.Env -> C.LedgerState -> [C.LedgerEvent] -> C.BlockInMode C.CardanoMode -> A -> IO A
+  go _env _ledgerState _ledgerEvents _blockInCardanoMode a = do
+    print a
+    pure $ a + 1
+
+  _this = C.foldBlocks nodeConfig socketPath C.QuickValidation 0 go
+
+  in do
+  either (print . C.renderFoldBlocksError) print =<< runExceptT _this
