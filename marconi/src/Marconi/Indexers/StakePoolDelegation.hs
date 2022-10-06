@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Marconi.Indexers.StakePoolDelegation where
@@ -7,6 +8,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (runExceptT)
 import Data.Foldable (forM_)
 import Data.Function ((&))
+import Data.Map qualified as M
 import Data.Maybe qualified as P
 import Database.SQLite.Simple qualified as SQL
 import Streaming.Prelude qualified as S
@@ -14,8 +16,13 @@ import System.IO
 
 import Cardano.Api qualified as C
 import Cardano.Api.Shelley qualified as Shelley
+import Cardano.Ledger.Crypto qualified as LC
+import Cardano.Ledger.Keys qualified as LK
+import Cardano.Ledger.PoolDistr qualified as Pd
+import Cardano.Ledger.Shelley.LedgerState qualified as SL
 import Cardano.Streaming (ChainSyncEvent (RollBackward, RollForward))
 import Ledger.Tx.CardanoAPI (withIsCardanoEra)
+import Ouroboros.Consensus.Shelley.Ledger.Ledger qualified as O
 
 import Marconi.Streaming.ChainSync (chainEventSource, rollbackRingBuffer)
 
@@ -95,11 +102,25 @@ hot = let
   mainnet = ( "/home/markus/cardano/socket/node.socket" :: FilePath
             , "/home/markus/cardano/config/config.json" :: FilePath )
 
-  (socketPath, nodeConfig) = mainnet
+  (socketPath, nodeConfig) = preview
 
   go :: C.Env -> C.LedgerState -> [C.LedgerEvent] -> C.BlockInMode C.CardanoMode -> A -> IO A
-  go _env _ledgerState _ledgerEvents _blockInCardanoMode a = do
+  go _env ledgerState _ledgerEvents _blockInCardanoMode a = let
+    C.LedgerState (_) = ledgerState
+    res = case ledgerState of
+      -- C.LedgerStateByron _st -> undefined
+      C.LedgerStateShelley st -> let
+        m :: M.Map (LK.KeyHash LK.StakePool LC.StandardCrypto) (Pd.IndividualPoolStake LC.StandardCrypto)
+        m = Pd.unPoolDistr $ SL.nesPd $ O.shelleyLedgerState st
+        m' = M.toList m
+        in Just m'
+      -- C.LedgerStateAllegra _st -> undefined
+      -- C.LedgerStateMary _st -> undefined
+      -- C.LedgerStateAlonzo _st -> undefined
+      _ -> Nothing -- pure ()
+    in do
     print a
+    print res
     pure $ a + 1
 
   _this = C.foldBlocks nodeConfig socketPath C.QuickValidation 0 go

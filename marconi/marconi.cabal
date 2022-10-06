@@ -70,6 +70,7 @@ library
     , cardano-ledger-shelley
     , cardano-ledger-shelley-ma
     , iohk-monitoring
+    , ouroboros-consensus-shelley
     , plutus-ledger-api
 
   ------------------------
