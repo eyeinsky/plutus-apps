@@ -3,6 +3,7 @@ index-state: 2022-05-18T00:00:00Z
 
 packages: cardano-streaming
           doc
+          evernode
           freer-extras
           marconi
           marconi-mamba
