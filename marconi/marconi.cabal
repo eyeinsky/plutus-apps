@@ -53,6 +53,8 @@ library
     Marconi.Streaming.ChainSync
     Marconi.Types
 
+  exposed-modules: Marconi.Indexers.UTxO
+
   --------------------
   -- Local components
   --------------------
