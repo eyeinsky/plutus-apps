@@ -12,8 +12,8 @@ import Cardano.Streaming (ChainSyncEvent (RollBackward), chainSyncEventSource)
 import Streaming.Prelude qualified as S
 
 
-countRollbacks :: FilePath -> C.NetworkId -> C.ChainPoint -> S.Stream (S.Of ()) IO r
-countRollbacks socketPath networkId point = chainSyncEventSource socketPath networkId point
+rollbackCounter :: FilePath -> C.NetworkId -> C.ChainPoint -> S.Stream (S.Of ()) IO r
+rollbackCounter socketPath networkId point = chainSyncEventSource socketPath networkId point
   & countLoop 0 Nothing
   where
     countLoop

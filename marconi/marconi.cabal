@@ -168,3 +168,28 @@ test-suite marconi-test
     , temporary
 
   ghc-options:    -fobject-code
+
+executable explore
+  import:         lang
+  hs-source-dirs: src
+  main-is:        Various.hs
+
+  --------------------
+  -- Local components
+  --------------------
+  build-depends:
+    , cardano-streaming
+    , marconi
+
+  --------------------------
+  -- Other IOG dependencies
+  --------------------------
+  build-depends:  iohk-monitoring
+
+  ------------------------
+  -- Non-IOG dependencies
+  ------------------------
+  build-depends:
+    , base           >=4.9 && <5
+    , directory
+    , prettyprinter
